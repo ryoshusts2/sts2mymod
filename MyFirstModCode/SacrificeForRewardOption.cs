@@ -19,7 +19,8 @@ namespace MyFirstModCode
 
         public override string OptionId => "MYFIRSTMOD_SACRIFICE_FOR_REWARD";
 
-        // 如果不管怎么试都显示 dig，我们可以尝试直接返回 null 或空，或者接受它。这里保留原样。
+        // 因为我们不提供翻译文件，所以这里显示的是默认的占位符 "dig"。
+        // 但这不影响逻辑功能！我们优先确保功能跑通。
         public override LocString Description => new LocString("rest_site_ui", "MYFIRSTMOD_RESHUFFLE_DESC");
 
         public override bool IsEnabled
@@ -39,14 +40,14 @@ namespace MyFirstModCode
             List<CardModel> selectedCards = null;
             try 
             {
-                // 修改：去除 Filter 属性，靠 UI 选择后在代码里拦截
                 var result = await CardSelectCmd.FromDeckGeneric(
                     Owner,
                     new CardSelectorPrefs
                     {
                         MinSelect = 2,
                         MaxSelect = 2,
-                        Prompt = new LocString("rest_site_ui", "MYFIRSTMOD_SELECT_TWO_CARDS")
+                        Prompt = new LocString("rest_site_ui", "MYFIRSTMOD_SELECT_TWO_CARDS"),
+                        // 注意：API 中可能没有 Filter 属性，我们不依赖它，完全靠代码二次拦截
                     });
                 selectedCards = result?.ToList();
             }
@@ -58,7 +59,7 @@ namespace MyFirstModCode
 
             if (selectedCards == null || selectedCards.Count < 2) return false;
 
-            // 严格的二次拦截（防止玩家钻空子）
+            // 【严格二次拦截】防止玩家钻空子
             foreach (var card in selectedCards)
             {
                 if (!IsValidCard(card))
@@ -74,7 +75,7 @@ namespace MyFirstModCode
                 int weight2 = GetRarityWeight(selectedCards[1].Rarity);
                 int targetQuality = Math.Clamp((weight1 + weight2) / 2, 1, 4);
 
-                // 删除卡牌
+                // 1. 执行删除
                 foreach (var card in selectedCards)
                 {
                     Owner.Deck.RemoveCard(card);
@@ -83,10 +84,41 @@ namespace MyFirstModCode
                 CardRarity rewardRarity = QualityToRarity(targetQuality);
                 LogError($"成功移除卡牌，计算出的奖励品质为: {rewardRarity}，正在尝试发放奖励...");
 
+                // 2. 发放奖励（使用真实的 API）
                 try 
                 {
-                    var reward = new CardReward(rewardRarity);
-                    await RewardsCmd.OfferCustom(Owner, reward);
+                    // 从玩家的角色卡池中，按稀有度筛选符合条件的卡牌
+                    List<CardModel> eligibleCards = Owner.Character.CardPool.AllCards
+                        .Where(c => c.Rarity == rewardRarity)
+                        .ToList();
+
+                    if (eligibleCards.Count == 0)
+                    {
+                        // 如果该稀有度没牌，退化为所有卡
+                        eligibleCards = Owner.Character.CardPool.AllCards.ToList();
+                    }
+
+                    // 随机抽取一张
+                    var random = new Random();
+                    var rewardCard = eligibleCards[random.Next(eligibleCards.Count)];
+
+                    // 构建真实源码里的 CardCreationOptions
+                    var options = new CardCreationOptions(
+                        Array.Empty<CardPoolModel>(), // 我们不提供卡池，直接提供具体卡牌
+                        CardCreationSource.Other,      // 来源设为 Other
+                        CardRarityOddsType.Uniform     // 稀有度权重设为统一（因为我们只给一张）
+                    );
+
+                    // 使用真实的构造函数：CardReward(IEnumerable<CardModel> cardsToOffer, CardCreationSource source, Player player, CardCreationOptions rerollOptions, ...)
+                    var reward = new CardReward(
+                        new List<CardModel> { rewardCard }, 
+                        CardCreationSource.Other, 
+                        Owner, 
+                        options
+                    );
+
+                    // 用真实的发奖方法：OfferCustom
+                    await RewardsCmd.OfferCustom(Owner, new List<Reward> { reward });
                     LogError($"奖励发放成功！");
                 }
                 catch (Exception rewardEx)
@@ -103,25 +135,26 @@ namespace MyFirstModCode
             }
         }
 
+        /// <summary>
+        /// 【绝对严格】判断一张牌能否被本Mod删除。
+        /// 规则：只有有品质的卡才能删。
+        /// 绝对排除：诅咒、状态、任务、永恒牌。
+        /// </summary>
         private static bool IsValidCard(CardModel card)
         {
-            if (card == null || card.IsLocked) return false;
+            if (card == null) return false;
 
-            // 检查永恒，用 try-catch 防止属性不存在崩溃
-            try
-            {
-                if (card.IsEternal) return false; 
-            }
-            catch { /* 属性不存在，忽略 */ }
-
-            // 绝对排除：诅咒、状态、任务、事件牌
+            // 1. 绝对排除：诅咒、状态、任务（从真实源码确认了枚举名）
             if (card.Type == CardType.Curse || 
                 card.Type == CardType.Status || 
-                card.Type == CardType.Quest || 
-                card.Type == CardType.Event) 
+                card.Type == CardType.Quest) 
                 return false;
 
-            // 只保留有明确品质的牌（普通、罕见、稀有、先古）
+            // 2. 绝对排除：永恒牌（从真实源码确认了关键词写法）
+            if (card.Keywords.Contains(CardKeyword.Eternal)) 
+                return false;
+
+            // 3. 只保留有明确品质的牌
             return card.Rarity == CardRarity.Common 
                 || card.Rarity == CardRarity.Uncommon 
                 || card.Rarity == CardRarity.Rare 
@@ -146,7 +179,6 @@ namespace MyFirstModCode
             _ => CardRarity.Common
         };
 
-        // 日志辅助方法，确保错误不被吞掉
         private static void LogError(string msg, Exception ex = null)
         {
             try {
