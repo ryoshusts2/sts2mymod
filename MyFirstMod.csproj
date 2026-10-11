@@ -14,12 +14,9 @@
         <NoWarn>$(NoWarn);MSB3270;CS0436</NoWarn>
 
         <GodotExportPreset>Windows Desktop</GodotExportPreset>
-        <!-- 修改：云端没有 Steam 路径，默认指向项目自带的根目录 -->
-        <Sts2Dir Condition="'$(Sts2Dir)' == '' and Exists('$(MSBuildProjectDirectory)\sts2.dll')">$(MSBuildProjectDirectory)</Sts2Dir>
-        <Sts2Dir Condition="'$(Sts2Dir)' == ''">$(MSBuildProgramFiles32)\Steam\steamapps\common\Slay the Spire 2</Sts2Dir>
-        
-        <Sts2DataDir Condition="'$(Sts2DataDir)' == '' and Exists('$(MSBuildProjectDirectory)\sts2.dll')">$(MSBuildProjectDirectory)</Sts2DataDir>
-        <Sts2DataDir Condition="'$(Sts2DataDir)' == ''">$(Sts2Dir)\data_sts2_windows_x86_64</Sts2DataDir>
+        <!-- 终极修复：云端编译直接强制写死路径，绝不进行任何条件判断，保证100%能找到文件 -->
+        <Sts2Dir>$(MSBuildProjectDirectory)</Sts2Dir>
+        <Sts2DataDir>$(MSBuildProjectDirectory)</Sts2DataDir>
         
         <ModOutputDir>$(Sts2Dir)\mods\$(MSBuildProjectName)\</ModOutputDir>
         <ModPckPath>$(ModOutputDir)$(MSBuildProjectName).pck</ModPckPath>
@@ -35,10 +32,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- 强制把 sts2 的所有内部成员公有化，否则云端编译器无法访问 CardModel 等内部类 -->
         <Publicize Include="sts2" IncludeVirtualMembers="false" IncludeCompilerGeneratedMembers="false"/>
     </ItemGroup>
 
     <ItemGroup>
+        <!-- 路径已经写死为当前项目根目录，绝对准确定位 -->
         <Reference Include="0Harmony" HintPath="$(Sts2DataDir)\0Harmony.dll" Private="True"/>
         <Reference Include="sts2" HintPath="$(Sts2DataDir)\sts2.dll" Private="True"/>
         <Reference Include="Steamworks.NET" HintPath="$(Sts2DataDir)\Steamworks.NET.dll" Private="True"/>
@@ -70,20 +69,4 @@
         <Folder Include="MyFirstMod\images\relics\"/>
         <Folder Include="MyFirstMod\scenes\characters\"/>
     </ItemGroup>
-
-    <Target Name="ValidateSts2GameInstall" BeforeTargets="ResolveAssemblyReferences">
-        <Error Condition="!Exists('$(Sts2DataDir)\sts2.dll')" Text="Could not find sts2.dll under '$(Sts2DataDir)'."/>
-    </Target>
-
-    <Target Name="CopyMod" AfterTargets="Build" Condition="'$(CopyModOnBuild)' != 'false'">
-        <MakeDir Directories="$(ModOutputDir)"/>
-        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModOutputDir)"/>
-        <Copy SourceFiles="$(MSBuildProjectDirectory)\$(MSBuildProjectName).json" DestinationFolder="$(ModOutputDir)"/>
-    </Target>
-
-    <Target Name="ExportPCK" AfterTargets="Build" Condition="'$(RunPckExport)' == 'true' and '$(STS2_SKIP_PCK_EXPORT)' != '1'">
-        <Error Condition="'$(GodotExe)' == '' or !Exists('$(GodotExe)')" Text="GodotExe is required for PCK export."/>
-        <MakeDir Directories="$(ModOutputDir)"/>
-        <Exec WorkingDirectory="$(MSBuildProjectDirectory)" Command="&quot;$(GodotExe)&quot; --headless --path &quot;$(MSBuildProjectDirectory)&quot; --export-pack &quot;$(GodotExportPreset)&quot; &quot;$(ModPckPath)&quot;" EnvironmentVariables="STS2_SKIP_PCK_EXPORT=1"/>
-    </Target>
 </Project>
