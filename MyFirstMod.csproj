@@ -14,17 +14,15 @@
         <NoWarn>$(NoWarn);MSB3270;CS0436</NoWarn>
 
         <GodotExportPreset>Windows Desktop</GodotExportPreset>
-        <!-- 修改：云端没有 Steam 路径，默认指向项目自带的 libs 文件夹 -->
-        <Sts2Dir Condition="'$(Sts2Dir)' == '' and Exists('$(MSBuildProjectDirectory)\libs\sts2.dll')">$(MSBuildProjectDirectory)\libs</Sts2Dir>
+        <!-- 修改：统一改为直接在项目根目录找 DLL -->
+        <Sts2Dir Condition="'$(Sts2Dir)' == '' and Exists('$(MSBuildProjectDirectory)\sts2.dll')">$(MSBuildProjectDirectory)</Sts2Dir>
         <Sts2Dir Condition="'$(Sts2Dir)' == ''">$(MSBuildProgramFiles32)\Steam\steamapps\common\Slay the Spire 2</Sts2Dir>
         
-        <Sts2DataDir Condition="'$(Sts2DataDir)' == '' and Exists('$(MSBuildProjectDirectory)\libs\sts2.dll')">$(MSBuildProjectDirectory)\libs</Sts2DataDir>
+        <Sts2DataDir Condition="'$(Sts2DataDir)' == '' and Exists('$(MSBuildProjectDirectory)\sts2.dll')">$(MSBuildProjectDirectory)</Sts2DataDir>
         <Sts2DataDir Condition="'$(Sts2DataDir)' == ''">$(Sts2Dir)\data_sts2_windows_x86_64</Sts2DataDir>
         
         <ModOutputDir>$(Sts2Dir)\mods\$(MSBuildProjectName)\</ModOutputDir>
         <ModPckPath>$(ModOutputDir)$(MSBuildProjectName).pck</ModPckPath>
-        <!-- 本机测试时 RitsuLib 包/构建逻辑会使用这个目录把 RitsuLib 部署到游戏 mods/STS2-RitsuLib。 -->
-        <!-- Local test builds use this directory when RitsuLib package/build logic deploys RitsuLib to game mods/STS2-RitsuLib. -->
         <RitsuLibDeployDir Condition="'$(RitsuLibDeployDir)' == ''">$(Sts2Dir)\mods\STS2-RitsuLib</RitsuLibDeployDir>
         <CopyModOnBuild Condition="'$(CopyModOnBuild)' == ''">true</CopyModOnBuild>
         <RunPckExport Condition="'$(RunPckExport)' == '' and '$(DesignTimeBuild)' != 'true'">true</RunPckExport>
@@ -33,7 +31,6 @@
 
     <ItemGroup>
         <PackageReference Include="Krafs.Publicizer" Version="2.2.1" PrivateAssets="all"/>
-        <!-- 主线 RitsuLib（STS2 0.105.0+），跟踪 NuGet 最新版本。兼容分支和 manifest 版本对齐规则见 README。 -->
         <PackageReference Include="STS2.RitsuLib" Version="*" GeneratePathProperty="true"/>
     </ItemGroup>
 
@@ -48,14 +45,11 @@
     </ItemGroup>
 
     <ItemGroup>
-        <!-- 中文：排除 Godot、IDE 和构建输出目录，避免本地生成文件参与编译。 -->
-        <!-- English: Exclude Godot, IDE, and build output directories so local generated files are not compiled. -->
         <Compile Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
         <EmbeddedResource Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
         <None Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
 
         <AdditionalFiles Include="MyFirstMod/localization/**/*.json"/>
-
         <Compile Remove="MyFirstMod/**"/>
         <EmbeddedResource Remove="MyFirstMod/**"/>
         <None Include="MyFirstMod/**"/>
