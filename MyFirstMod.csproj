@@ -7,18 +7,9 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <EnableDynamicLoading>true</EnableDynamicLoading>
         <RootNamespace>MyFirstMod</RootNamespace>
-        <AppOutputBase>$(MSBuildProjectDirectory)\</AppOutputBase>
-        <PathMap>$(AppOutputBase)=.\</PathMap>
         <NoWarn>$(NoWarn);MSB3270;CS0436</NoWarn>
-
-        <GodotExportPreset>Windows Desktop</GodotExportPreset>
-        <!-- 强制写死数据目录，不做任何复杂判断 -->
-        <Sts2DataDir>$(MSBuildProjectDirectory)</Sts2DataDir>
-        <ModOutputDir>$(Sts2DataDir)\mods\$(MSBuildProjectName)\</ModOutputDir>
-        <ModPckPath>$(ModOutputDir)$(MSBuildProjectName).pck</ModPckPath>
-        <RitsuLibDeployDir>$(Sts2DataDir)\mods\STS2-RitsuLib</RitsuLibDeployDir>
-        <CopyModOnBuild>true</CopyModOnBuild>
         <RunPckExport>false</RunPckExport>
+        <CopyModOnBuild>false</RunPckExport> <!-- 云端不复制到本地模组目录 -->
     </PropertyGroup>
 
     <ItemGroup>
@@ -26,15 +17,15 @@
         <PackageReference Include="STS2.RitsuLib" Version="*" GeneratePathProperty="true"/>
     </ItemGroup>
 
+    <!-- 强制使用相对路径，因为所有 DLL 都在当前目录 -->
     <ItemGroup>
-        <!-- 核心改动：直接使用相对路径，因为文件全在同一个目录里，绝对能找到！ -->
         <Reference Include="0Harmony" HintPath="0Harmony.dll" Private="True"/>
         <Reference Include="sts2" HintPath="sts2.dll" Private="True"/>
         <Reference Include="Steamworks.NET" HintPath="Steamworks.NET.dll" Private="True"/>
     </ItemGroup>
 
+    <!-- 强制公开化，包含所有私有成员 -->
     <ItemGroup>
-        <!-- 标准公开化写法，自动解析上面配置的引用路径 -->
         <Publicize Include="sts2" IncludeVirtualMembers="true" IncludeCompilerGeneratedMembers="true" />
     </ItemGroup>
 
@@ -42,7 +33,7 @@
         <Compile Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
         <EmbeddedResource Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
         <None Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
-
+        <AdditionalFiles Include="MyFirstMod/localization/**/*.json"/>
         <Compile Remove="MyFirstMod/**"/>
         <EmbeddedResource Remove="MyFirstMod/**"/>
         <None Include="MyFirstMod/**"/>
@@ -50,6 +41,5 @@
         <None Include="project.godot"/>
         <None Include="export_presets.cfg"/>
         <None Include=".gitignore"/>
-        <None Include="local.props.template"/>
     </ItemGroup>
 </Project>
