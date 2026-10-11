@@ -1,0 +1,17 @@
+{
+  "id": "MyFirstMod",
+  "name": "篝火扩展",
+  "author": "ryoshu",
+  "version": "1.0.0",
+  "description": "添加一个篝火选项：删除两张卡牌，根据稀有度加权平均值获得对应品质的卡牌奖励。",
+  "has_dll": true,
+  "has_pck": false,
+  "affects_gameplay": true,
+  "dependencies": [
+    { "id": "STS2-RitsuLib", "version": "0.6.5" }
+  ],
+  "entryPoint": "MyModEntry",
+  "dll": "MyFirstMod.dll",
+  "minGameVersion": "0.111.0",
+  "gameVersion": "0.111.x"
+}
