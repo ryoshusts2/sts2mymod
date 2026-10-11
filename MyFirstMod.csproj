@@ -14,13 +14,11 @@
         <NoWarn>$(NoWarn);MSB3270;CS0436</NoWarn>
 
         <GodotExportPreset>Windows Desktop</GodotExportPreset>
-        <!-- 终极修复：云端编译直接强制写死路径，绝不进行任何条件判断，保证100%能找到文件 -->
-        <Sts2Dir>$(MSBuildProjectDirectory)</Sts2Dir>
+        <!-- 强制指向项目根目录 -->
         <Sts2DataDir>$(MSBuildProjectDirectory)</Sts2DataDir>
-        
-        <ModOutputDir>$(Sts2Dir)\mods\$(MSBuildProjectName)\</ModOutputDir>
+        <ModOutputDir>$(Sts2DataDir)\mods\$(MSBuildProjectName)\</ModOutputDir>
         <ModPckPath>$(ModOutputDir)$(MSBuildProjectName).pck</ModPckPath>
-        <RitsuLibDeployDir Condition="'$(RitsuLibDeployDir)' == ''">$(Sts2Dir)\mods\STS2-RitsuLib</RitsuLibDeployDir>
+        <RitsuLibDeployDir Condition="'$(RitsuLibDeployDir)' == ''">$(Sts2DataDir)\mods\STS2-RitsuLib</RitsuLibDeployDir>
         <CopyModOnBuild Condition="'$(CopyModOnBuild)' == ''">true</CopyModOnBuild>
         <RunPckExport Condition="'$(RunPckExport)' == '' and '$(DesignTimeBuild)' != 'true'">true</RunPckExport>
         <RunPckExport Condition="'$(RunPckExport)' == ''">false</RunPckExport>
@@ -32,22 +30,20 @@
     </ItemGroup>
 
     <ItemGroup>
-        <!-- 强制把 sts2 的所有内部成员公有化，否则云端编译器无法访问 CardModel 等内部类 -->
-        <Publicize Include="sts2" IncludeVirtualMembers="false" IncludeCompilerGeneratedMembers="false"/>
-    </ItemGroup>
-
-    <ItemGroup>
-        <!-- 路径已经写死为当前项目根目录，绝对准确定位 -->
         <Reference Include="0Harmony" HintPath="$(Sts2DataDir)\0Harmony.dll" Private="True"/>
         <Reference Include="sts2" HintPath="$(Sts2DataDir)\sts2.dll" Private="True"/>
         <Reference Include="Steamworks.NET" HintPath="$(Sts2DataDir)\Steamworks.NET.dll" Private="True"/>
+    </ItemGroup>
+
+    <!-- 终极保险：强制指定路径，公开化所有虚拟和编译器生成成员，彻底解决找不到定义的问题 -->
+    <ItemGroup>
+        <Publicize Include="sts2" Path="$(Sts2DataDir)\sts2.dll" IncludeVirtualMembers="true" IncludeCompilerGeneratedMembers="true" />
     </ItemGroup>
 
     <ItemGroup>
         <Compile Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
         <EmbeddedResource Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
         <None Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
-
         <AdditionalFiles Include="MyFirstMod/localization/**/*.json"/>
         <Compile Remove="MyFirstMod/**"/>
         <EmbeddedResource Remove="MyFirstMod/**"/>
