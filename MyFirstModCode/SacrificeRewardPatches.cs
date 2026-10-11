@@ -17,17 +17,13 @@ namespace MyFirstModCode
         {
             try
             {
-                File.AppendAllText(MyModEntry.LogPath, $"[{DateTime.Now}] 检测到篝火选项生成！\n");
-                
                 if (__result == null) __result = new List<RestSiteOption>();
                 if (__result.Any(o => o.OptionId == "MYFIRSTMOD_SACRIFICE_FOR_REWARD")) return;
                 __result.Add(new SacrificeForRewardOption(player));
             }
             catch (Exception ex)
             {
-                try {
-                    File.AppendAllText(MyModEntry.LogPath, $"[{DateTime.Now}] 补丁报错: {ex.Message}\n");
-                } catch { }
+                try { File.AppendAllText(MyModEntry.LogPath, $"[{DateTime.Now}] 补丁报错: {ex.Message}\n"); } catch { }
             }
         }
     }
