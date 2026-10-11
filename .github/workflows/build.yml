@@ -1,24 +1,18 @@
 name: Build MyFirstMod
-
 on: [push, workflow_dispatch]
-
 jobs:
   build:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
-    
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
-        
     - name: Restore dependencies
       run: dotnet restore MyFirstMod.csproj
-      
     - name: Build Mod
       run: dotnet build MyFirstMod.csproj -c Release -p:CopyModOnBuild=false -p:RunPckExport=false
-      
     - name: Upload DLL
       uses: actions/upload-artifact@v4
       with:
