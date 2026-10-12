@@ -13,11 +13,9 @@ jobs:
       run: dotnet restore MyFirstMod.csproj
     - name: Build Mod
       run: dotnet build MyFirstMod.csproj -c Release
-    - name: Debug - List all DLL files
-      run: dir /s /b *.dll
     - name: Upload DLL
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        # 使用通配符强制抓取，确保万无一失
-        path: '**/MyFirstMod.dll'
+        # 采用绝对匹配的路径，这在云端是最标准的写法
+        path: bin/Release/net9.0/MyFirstMod.dll
