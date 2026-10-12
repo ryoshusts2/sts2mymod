@@ -17,5 +17,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        # 采用绝对匹配的路径，这在云端是最标准的写法
-        path: bin/Release/net9.0/MyFirstMod.dll
+        # 修改：使用绝对路径+通配符，强行把云端里所有叫这个名字的 DLL 都抓下来
+        path: ${{ github.workspace }}/**/MyFirstMod.dll
