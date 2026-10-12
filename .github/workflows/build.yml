@@ -12,11 +12,15 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore MyFirstMod.csproj
     - name: Build Mod
-      # 关键：强制指定编译输出到当前目录的 publish 文件夹
       run: dotnet build MyFirstMod.csproj -c Release -o ./publish
-    - name: Upload DLL
+    - name: Upload All Mod Files
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        # 直接去刚设定的 publish 文件夹里拿
-        path: ./publish/MyFirstMod.dll
+        # 把游戏运行 Mod 必须用到的全部 DLL 和 json 一起打包
+        path: |
+          ./publish/MyFirstMod.dll
+          ./publish/0Harmony.dll
+          ./publish/sts2.dll
+          ./publish/Steamworks.NET.dll
+          ./MyFirstMod.json
