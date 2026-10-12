@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
-using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.RestSite;
 using MegaCrit.Sts2.Core.Localization;
@@ -21,18 +20,14 @@ namespace MyFirstModCode
 
         public override bool IsEnabled
         {
-            get
-            {
-                if (Owner?.Deck == null) return false;
-                return Owner.Deck.Cards.Count(IsValidCard) >= 2;
-            }
+            get { return Owner?.Deck != null && Owner.Deck.Cards.Count(IsValidCard) >= 2; }
         }
 
         public override async Task<bool> OnSelect()
         {
             if (Owner == null) return false;
 
-            List<CardModel> selectedCards = null;
+            List<object> selectedCards = null;
             try
             {
                 var prefsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.CardSelection.CardSelectorPrefs");
@@ -42,7 +37,7 @@ namespace MyFirstModCode
                 AccessTools.Property(prefsType, "Prompt")?.SetValue(prefs, new LocString("rest_site_ui", "MYFIRSTMOD_SELECT_TWO_CARDS"));
 
                 var method = AccessTools.Method(typeof(CardSelectCmd), "FromDeckGeneric");
-                var result = method.Invoke(null, new object[] { Owner, prefs }) as IEnumerable<CardModel>;
+                var result = method.Invoke(null, new object[] { Owner, prefs }) as IEnumerable<object>;
                 selectedCards = result?.ToList();
             }
             catch (Exception ex) { LogError("打开选卡界面失败", ex); return false; }
@@ -52,29 +47,36 @@ namespace MyFirstModCode
 
             try
             {
-                int w1 = GetRarityWeight(selectedCards[0].Rarity);
-                int w2 = GetRarityWeight(selectedCards[1].Rarity);
+                int w1 = GetRarityWeight(selectedCards[0]);
+                int w2 = GetRarityWeight(selectedCards[1]);
                 int targetQ = Math.Clamp((w1 + w2) / 2, 1, 4);
 
-                foreach (var card in selectedCards)
-                {
-                    AccessTools.Method(Owner.Deck.GetType(), "RemoveCard")?.Invoke(Owner.Deck, new object[] { card });
-                }
+                var removeMethod = AccessTools.Method(Owner.Deck.GetType(), "RemoveCard");
+                foreach (var card in selectedCards) removeMethod?.Invoke(Owner.Deck, new object[] { card });
 
-                CardRarity rewardRarity = QualityToRarity(targetQ);
-                var eligibleCards = Owner.Character.CardPool.AllCards.Where(c => c.Rarity == rewardRarity).ToList();
-                if (eligibleCards.Count == 0) eligibleCards = Owner.Character.CardPool.AllCards.ToList();
+                var rarityType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Entities.Cards.CardRarity");
+                object rewardRarity = QualityToRarity(targetQ, rarityType);
 
-                var rewardCard = eligibleCards[new Random().Next(eligibleCards.Count)];
+                var allCardsProp = AccessTools.Property(Owner.Character.CardPool.GetType(), "AllCards");
+                var allCards = (allCardsProp.GetValue(Owner.Character.CardPool) as IEnumerable<object>)?.ToList();
+                if (allCards == null) return false;
+
+                var eligible = allCards.Where(c => AccessTools.Property(c.GetType(), "Rarity")?.GetValue(c)?.Equals(rewardRarity) == true).ToList();
+                if (!eligible.Any()) eligible = allCards;
+
+                object rewardCard = eligible[new Random().Next(eligible.Count)];
 
                 var optionsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationOptions");
                 var options = Activator.CreateInstance(optionsType, new object[] {
-                    Array.Empty<object>(), Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"), Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardRarityOddsType"), "Uniform")
+                    Array.Empty<object>(),
+                    Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"),
+                    Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardRarityOddsType"), "Uniform")
                 });
 
-                var rewardType = typeof(CardReward);
-                var ctor = AccessTools.Constructor(rewardType, new[] { typeof(IEnumerable<CardModel>), AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), typeof(Player), optionsType });
-                var reward = ctor.Invoke(new object[] { new List<CardModel> { rewardCard }, Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"), Owner, options });
+                // 用反射获取 CardReward 类，因为它是 internal 的
+                var cardRewardType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Rewards.CardReward");
+                var rewardCtor = AccessTools.Constructor(cardRewardType, new[] { typeof(IEnumerable<object>), AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), typeof(Player), optionsType });
+                var reward = rewardCtor.Invoke(new object[] { new List<object> { rewardCard }, Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"), Owner, options });
 
                 await RewardsCmd.OfferCustom(Owner, new List<Reward> { reward as Reward });
                 return true;
@@ -82,16 +84,19 @@ namespace MyFirstModCode
             catch (Exception ex) { LogError("发放奖励失败", ex); return false; }
         }
 
-        private static bool IsValidCard(CardModel card)
+        private static bool IsValidCard(object card)
         {
             if (card == null) return false;
-            if (card.Type == CardType.Curse || card.Type == CardType.Status || card.Type == CardType.Quest) return false;
-            if (card.Keywords.Contains(CardKeyword.Eternal)) return false;
-            return card.Rarity == CardRarity.Common || card.Rarity == CardRarity.Uncommon || card.Rarity == CardRarity.Rare || card.Rarity == CardRarity.Ancient;
+            Type t = card.GetType();
+            string typeStr = AccessTools.Property(t, "Type")?.GetValue(card)?.ToString();
+            if (typeStr == "Curse" || typeStr == "Status" || typeStr == "Quest") return false;
+            var keywords = AccessTools.Property(t, "Keywords")?.GetValue(card) as IEnumerable<object>;
+            if (keywords != null && keywords.Any(k => k.ToString() == "Eternal")) return false;
+            return true;
         }
 
-        private static int GetRarityWeight(CardRarity r) => r switch { CardRarity.Common => 1, CardRarity.Uncommon => 2, CardRarity.Rare => 3, CardRarity.Ancient => 4, _ => 1 };
-        private static CardRarity QualityToRarity(int q) => q switch { 1 => CardRarity.Common, 2 => CardRarity.Uncommon, 3 => CardRarity.Rare, 4 => CardRarity.Ancient, _ => CardRarity.Common };
+        private static int GetRarityWeight(object card) => AccessTools.Property(card.GetType(), "Rarity")?.GetValue(card)?.ToString() switch { "Common" => 1, "Uncommon" => 2, "Rare" => 3, "Ancient" => 4, _ => 1 };
+        private static object QualityToRarity(int q, Type t) => Enum.Parse(t, q switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" });
 
         private static void LogError(string msg, Exception ex = null)
         {
