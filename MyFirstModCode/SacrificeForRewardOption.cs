@@ -19,24 +19,8 @@ namespace MyFirstModCode
         public SacrificeForRewardOption(Player owner) : base(owner) { }
         public override string OptionId => "MYFIRSTMOD_SACRIFICE_FOR_REWARD";
         
-        // 直接硬编码名字，避免底层翻译键缺失
-        public override LocString Title => new LocString("rest_site_ui", "重塑");
+        // 描述是虚属性，可以安全重写，不会报错
         public override LocString Description => new LocString("rest_site_ui", "删除两张卡，并视删除卡的价值获得一次卡牌奖励。");
-
-        // 强制返回“锻造”图标，避免UI崩溃
-        public override Godot.Texture2D Icon
-        {
-            get
-            {
-                try
-                {
-                    var texture = Godot.GD.Load<Godot.Texture2D>("res://images/ui/rest_site/option_smith.png");
-                    if (texture != null) return texture;
-                }
-                catch { }
-                return Godot.ImageTexture.CreateFromImage(Godot.Image.Create(32, 32, false, Godot.Image.Format.Rgba8));
-            }
-        }
 
         public override bool IsEnabled
         {
@@ -68,7 +52,7 @@ namespace MyFirstModCode
                 var prefsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.CardSelection.CardSelectorPrefs");
                 if (prefsType == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardSelectorPrefs"); return false; }
                 
-                // 【终极修复】直接通过反射设置私有字段，绕过只读属性的限制！
+                // 【终极修复】使用反射直接设置私有字段，绕过只读属性的限制
                 var prefs = Activator.CreateInstance(prefsType);
                 AccessTools.Field(prefsType, "<MinSelect>k__BackingField")?.SetValue(prefs, 2);
                 AccessTools.Field(prefsType, "<MaxSelect>k__BackingField")?.SetValue(prefs, 2);

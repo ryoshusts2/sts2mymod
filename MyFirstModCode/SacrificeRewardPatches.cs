@@ -5,6 +5,7 @@ using System.Reflection;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.RestSite;
+using MegaCrit.Sts2.Core.Localization;
 
 namespace MyFirstModCode
 {
@@ -28,7 +29,7 @@ namespace MyFirstModCode
         }
     }
 
-    // 图片路径补丁（保留，因为之前生效了）
+    // 1. 图片路径补丁（保留之前的成功方案）
     [HarmonyPatch]
     public static class AssetCachePatch
     {
@@ -47,6 +48,26 @@ namespace MyFirstModCode
                 Godot.GD.Print($"[MyFirstMod] 成功拦截，修正路径为: {path}");
             }
             return true; 
+        }
+    }
+
+    // 2. 名字补丁（强制修改“重塑”）
+    [HarmonyPatch]
+    public static class RestSiteOptionTitlePatch
+    {
+        [HarmonyPrepare]
+        static bool Prepare() => AccessTools.Property(typeof(RestSiteOption), "Title") != null;
+
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() => AccessTools.Property(typeof(RestSiteOption), "Title").GetGetMethod();
+
+        [HarmonyPostfix]
+        public static void Postfix(RestSiteOption __instance, ref LocString __result)
+        {
+            if (__instance.OptionId == "MYFIRSTMOD_SACRIFICE_FOR_REWARD")
+            {
+                __result = new LocString("rest_site_ui", "重塑");
+            }
         }
     }
 }
