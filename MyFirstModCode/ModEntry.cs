@@ -9,8 +9,8 @@ public static class MyModEntry
 {
     public const string ModId = "MyFirstMod";
     
-    // 修改：强制写到手机的公共下载目录
-    public static string LogPath = "/sdcard/Download/MyFirstMod_Debug.txt";
+    // 修改：写到游戏自己的私有目录，绝对不会被安卓拦截
+    public static string LogPath = "/sdcard/Android/data/com.megacrit.sts2re/files/MyFirstMod_Debug.txt";
 
     public static void Initialize()
     {
