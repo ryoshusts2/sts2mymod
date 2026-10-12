@@ -4,7 +4,7 @@ using System.Linq;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.RestSite;
-using MegaCrit.Sts2.Core.Localization;
+using MegaCrit.Sts2.Core.Assets; // 必须引入这个命名空间来补丁 ImageHelper
 
 namespace MyFirstModCode
 {
@@ -28,28 +28,17 @@ namespace MyFirstModCode
             }
         }
 
-        // 2. 【核心修复】强制将选项名字变为“重塑”，彻底解决显示为 "dig" 的问题
-        [HarmonyPatch("Title", MethodType.Getter)]
+        // 2. 【终极修复】在底层拦截图片路径生成，把我们的选项强制指向游戏原版的“锻造”图标
+        [HarmonyPatch(typeof(ImageHelper))]
+        [HarmonyPatch(nameof(ImageHelper.GetImagePath))]
         [HarmonyPrefix]
-        public static bool Prefix_Title(RestSiteOption __instance, ref LocString __result)
+        public static bool Prefix_GetImagePath(ref string __0, ref string __result)
         {
-            if (__instance.OptionId == "MYFIRSTMOD_SACRIFICE_FOR_REWARD")
-            {
-                __result = new LocString("rest_site_ui", "重塑");
-                return false;
-            }
-            return true;
-        }
-
-        // 3. 拦截图标路径，强制借用游戏原版的“锻造”图标，解决因为找不到图片而崩溃的问题
-        [HarmonyPatch("IconPath", MethodType.Getter)]
-        [HarmonyPrefix]
-        public static bool Prefix_IconPath(RestSiteOption __instance, ref string __result)
-        {
-            if (__instance.OptionId == "MYFIRSTMOD_SACRIFICE_FOR_REWARD")
+            // 如果请求的路径里包含我们 Mod 的名字，直接替换为官方图标
+            if (__0 != null && __0.Contains("myfirstmod_sacrifice_for_reward"))
             {
                 __result = "ui/rest_site/option_smith.png"; 
-                return false; 
+                return false; // 跳过原方法，直接返回我们设定的图标
             }
             return true;
         }
