@@ -1,18 +1,35 @@
 name: Build MyFirstMod
 on: [push, workflow_dispatch]
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Setup .NET
+
+    - name: Setup .NET SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
+
+    # 关键步骤：安装 Godot 4.5.1 Mono 版本
+    - name: Setup Godot
+      uses: chickensoft-games/setup-godot@v2
+      with:
+        version: 4.5.1
+        use-dotnet: true
+        include-templates: true
+
+    # 关键步骤：让 Godot 生成必要的 .NET 绑定文件
+    - name: Generate .NET Bindings
+      run: godot --headless --build-solutions --quit || exit 0
+
     - name: Restore dependencies
       run: dotnet restore MyFirstMod.csproj
+
     - name: Build Mod
       run: dotnet build MyFirstMod.csproj -c Release
+
     - name: Upload DLL
       uses: actions/upload-artifact@v4
       with:
