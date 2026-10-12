@@ -17,5 +17,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        # 修改：使用绝对路径+通配符，强行把云端里所有叫这个名字的 DLL 都抓下来
         path: ${{ github.workspace }}/**/MyFirstMod.dll
