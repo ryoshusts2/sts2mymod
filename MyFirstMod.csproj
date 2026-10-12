@@ -8,39 +8,51 @@
         <EnableDynamicLoading>true</EnableDynamicLoading>
         <RootNamespace>MyFirstMod</RootNamespace>
         <NoWarn>$(NoWarn);MSB3270;CS0436</NoWarn>
-        <RunPckExport>false</RunPckExport>
-        <!-- 就是这里！之前写错了结束标签，现在改对了 -->
+        
+        <!-- 云端编译时，禁止复制到本地模组目录，禁止打包PCK文件 -->
         <CopyModOnBuild>false</CopyModOnBuild>
+        <RunPckExport>false</RunPckExport>
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Krafs.Publicizer" Version="2.2.1" PrivateAssets="all"/>
-        <PackageReference Include="STS2.RitsuLib" Version="*" GeneratePathProperty="true"/>
+        <PackageReference Include="Krafs.Publicizer" Version="2.2.1" PrivateAssets="all" />
+        <PackageReference Include="STS2.RitsuLib" Version="*" GeneratePathProperty="true" />
     </ItemGroup>
 
-    <!-- 强制使用相对路径，因为所有 DLL 都在当前目录 -->
+    <!-- 直接使用相对路径引用游戏DLL，因为所有文件都在同一个目录里 -->
     <ItemGroup>
-        <Reference Include="0Harmony" HintPath="0Harmony.dll" Private="True"/>
-        <Reference Include="sts2" HintPath="sts2.dll" Private="True"/>
-        <Reference Include="Steamworks.NET" HintPath="Steamworks.NET.dll" Private="True"/>
+        <Reference Include="0Harmony">
+            <HintPath>0Harmony.dll</HintPath>
+            <Private>True</Private>
+        </Reference>
+        <Reference Include="sts2">
+            <HintPath>sts2.dll</HintPath>
+            <Private>True</Private>
+        </Reference>
+        <Reference Include="Steamworks.NET">
+            <HintPath>Steamworks.NET.dll</HintPath>
+            <Private>True</Private>
+        </Reference>
     </ItemGroup>
 
-    <!-- 强制公开化，包含所有私有成员 -->
+    <!-- 强制公开化，让编译器能看到 CardModel、CardReward 等内部类 -->
     <ItemGroup>
         <Publicize Include="sts2" IncludeVirtualMembers="true" IncludeCompilerGeneratedMembers="true" />
     </ItemGroup>
 
+    <!-- 排除不需要编译的文件夹和文件 -->
     <ItemGroup>
-        <Compile Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
-        <EmbeddedResource Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
-        <None Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**"/>
-        <AdditionalFiles Include="MyFirstMod/localization/**/*.json"/>
-        <Compile Remove="MyFirstMod/**"/>
-        <EmbeddedResource Remove="MyFirstMod/**"/>
-        <None Include="MyFirstMod/**"/>
-        <None Include="MyFirstMod.json"/>
-        <None Include="project.godot"/>
-        <None Include="export_presets.cfg"/>
-        <None Include=".gitignore"/>
+        <Compile Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**" />
+        <EmbeddedResource Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**" />
+        <None Remove=".godot/**;.idea/**;.vs/**;bin/**;obj/**" />
+        
+        <AdditionalFiles Include="MyFirstMod/localization/**/*.json" />
+        <Compile Remove="MyFirstMod/**" />
+        <EmbeddedResource Remove="MyFirstMod/**" />
+        <None Include="MyFirstMod/**" />
+        <None Include="MyFirstMod.json" />
+        <None Include="project.godot" />
+        <None Include="export_presets.cfg" />
+        <None Include=".gitignore" />
     </ItemGroup>
 </Project>
