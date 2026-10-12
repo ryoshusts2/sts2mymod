@@ -9,7 +9,8 @@
         <RootNamespace>MyFirstMod</RootNamespace>
         <NoWarn>$(NoWarn);MSB3270;CS0436</NoWarn>
         <RunPckExport>false</RunPckExport>
-        <CopyModOnBuild>false</RunPckExport> <!-- 云端不复制到本地模组目录 -->
+        <!-- 就是这里！之前写错了结束标签，现在改对了 -->
+        <CopyModOnBuild>false</CopyModOnBuild>
     </PropertyGroup>
 
     <ItemGroup>
