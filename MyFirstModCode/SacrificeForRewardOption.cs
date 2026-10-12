@@ -8,7 +8,6 @@ using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.RestSite;
 using MegaCrit.Sts2.Core.Localization;
-using MegaCrit.Sts2.Core.Rewards;
 
 namespace MyFirstModCode
 {
@@ -26,62 +25,44 @@ namespace MyFirstModCode
         public override async Task<bool> OnSelect()
         {
             if (Owner == null) return false;
+            Log("====== 玩家点击了重塑选项！开始执行逻辑 ======");
 
-            List<object> selectedCards = null;
             try
             {
+                Log("正在准备弹窗选卡...");
                 var prefsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.CardSelection.CardSelectorPrefs");
+                if (prefsType == null) { Log("报错：找不到 CardSelectorPrefs 类型"); return false; }
+                
                 var prefs = Activator.CreateInstance(prefsType);
                 AccessTools.Property(prefsType, "MinSelect")?.SetValue(prefs, 2);
                 AccessTools.Property(prefsType, "MaxSelect")?.SetValue(prefs, 2);
                 AccessTools.Property(prefsType, "Prompt")?.SetValue(prefs, new LocString("rest_site_ui", "MYFIRSTMOD_SELECT_TWO_CARDS"));
 
                 var method = AccessTools.Method(typeof(CardSelectCmd), "FromDeckGeneric");
-                var result = method.Invoke(null, new object[] { Owner, prefs }) as IEnumerable<object>;
-                selectedCards = result?.ToList();
-            }
-            catch (Exception ex) { LogError("打开选卡界面失败", ex); return false; }
+                if (method == null) { Log("报错：找不到 FromDeckGeneric 方法"); return false; }
 
-            if (selectedCards == null || selectedCards.Count < 2) return false;
-            foreach (var card in selectedCards) { if (!IsValidCard(card)) return false; }
+                Log("正在调用游戏底层选卡弹窗...");
+                var result = method.Invoke(null, new object[] { Owner, prefs }) as System.Collections.IEnumerable;
+                if (result == null) { Log("报错：选卡结果返回为空"); return false; }
 
-            try
-            {
-                int w1 = GetRarityWeight(selectedCards[0]);
-                int w2 = GetRarityWeight(selectedCards[1]);
-                int targetQ = Math.Clamp((w1 + w2) / 2, 1, 4);
+                List<object> selectedCards = result.Cast<object>().ToList();
+                if (selectedCards.Count < 2) { Log("报错：玩家没有选够2张牌"); return false; }
 
+                Log($"成功选中 {selectedCards.Count} 张牌，准备删除...");
                 var removeMethod = AccessTools.Method(Owner.Deck.GetType(), "RemoveCard");
                 foreach (var card in selectedCards) removeMethod?.Invoke(Owner.Deck, new object[] { card });
 
-                var rarityType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Entities.Cards.CardRarity");
-                object rewardRarity = QualityToRarity(targetQ, rarityType);
-
-                var allCardsProp = AccessTools.Property(Owner.Character.CardPool.GetType(), "AllCards");
-                var allCards = (allCardsProp.GetValue(Owner.Character.CardPool) as IEnumerable<object>)?.ToList();
-                if (allCards == null) return false;
-
-                var eligible = allCards.Where(c => AccessTools.Property(c.GetType(), "Rarity")?.GetValue(c)?.Equals(rewardRarity) == true).ToList();
-                if (!eligible.Any()) eligible = allCards;
-
-                object rewardCard = eligible[new Random().Next(eligible.Count)];
-
-                var optionsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationOptions");
-                var options = Activator.CreateInstance(optionsType, new object[] {
-                    Array.Empty<object>(),
-                    Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"),
-                    Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardRarityOddsType"), "Uniform")
-                });
-
-                // 用反射获取 CardReward 类，因为它是 internal 的
-                var cardRewardType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Rewards.CardReward");
-                var rewardCtor = AccessTools.Constructor(cardRewardType, new[] { typeof(IEnumerable<object>), AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), typeof(Player), optionsType });
-                var reward = rewardCtor.Invoke(new object[] { new List<object> { rewardCard }, Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"), Owner, options });
-
-                await RewardsCmd.OfferCustom(Owner, new List<Reward> { reward as Reward });
+                Log("删卡成功！准备发放奖励（此处暂不测试奖励，避免报错）...");
+                
+                // 为了先跑通点击流程，我们暂时不测试发奖励代码，先让删卡成功生效！
+                Log("====== 逻辑执行完成！ ======");
                 return true;
             }
-            catch (Exception ex) { LogError("发放奖励失败", ex); return false; }
+            catch (Exception ex)
+            {
+                Log($"点击时报错了！\n异常: {ex.Message}\n堆栈: {ex.StackTrace}");
+                return false;
+            }
         }
 
         private static bool IsValidCard(object card)
@@ -90,17 +71,14 @@ namespace MyFirstModCode
             Type t = card.GetType();
             string typeStr = AccessTools.Property(t, "Type")?.GetValue(card)?.ToString();
             if (typeStr == "Curse" || typeStr == "Status" || typeStr == "Quest") return false;
-            var keywords = AccessTools.Property(t, "Keywords")?.GetValue(card) as IEnumerable<object>;
-            if (keywords != null && keywords.Any(k => k.ToString() == "Eternal")) return false;
+            var keywords = AccessTools.Property(t, "Keywords")?.GetValue(card) as System.Collections.IEnumerable;
+            if (keywords != null && keywords.Cast<object>().Any(k => k.ToString() == "Eternal")) return false;
             return true;
         }
 
-        private static int GetRarityWeight(object card) => AccessTools.Property(card.GetType(), "Rarity")?.GetValue(card)?.ToString() switch { "Common" => 1, "Uncommon" => 2, "Rare" => 3, "Ancient" => 4, _ => 1 };
-        private static object QualityToRarity(int q, Type t) => Enum.Parse(t, q switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" });
-
-        private static void LogError(string msg, Exception ex = null)
+        private static void Log(string msg)
         {
-            try { File.AppendAllText(MyModEntry.LogPath, $"[{DateTime.Now}] {msg}: {ex?.Message}\n"); } catch { }
+            try { File.AppendAllText(MyModEntry.LogPath, $"[{DateTime.Now}] {msg}\n"); } catch { }
         }
     }
 }
