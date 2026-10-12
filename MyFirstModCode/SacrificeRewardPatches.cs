@@ -8,7 +8,6 @@ using MegaCrit.Sts2.Core.Entities.RestSite;
 
 namespace MyFirstModCode
 {
-    // 1. 在篝火生成选项时，把我们的选项加进去
     [HarmonyPatch(typeof(RestSiteOption))]
     public static class SacrificeRewardPatches
     {
@@ -29,26 +28,27 @@ namespace MyFirstModCode
         }
     }
 
-    // 2. 用字符串反射拦截底层图片加载，强制指向游戏自带的“锻造”图标
+    // 终极一击：拦截 AssetCache.GetTexture2D，强制替换所有请求的错误路径
     [HarmonyPatch]
-    public static class ImageHelperPatch
+    public static class AssetCachePatch
     {
         [HarmonyPrepare]
-        static bool Prepare() => AccessTools.TypeByName("MegaCrit.Sts2.Core.Assets.ImageHelper") != null;
+        static bool Prepare() => AccessTools.TypeByName("MegaCrit.Sts2.Core.Assets.AssetCache") != null;
 
         [HarmonyTargetMethod]
-        static MethodBase TargetMethod() => AccessTools.Method(AccessTools.TypeByName("MegaCrit.Sts2.Core.Assets.ImageHelper"), "GetImagePath");
+        static MethodBase TargetMethod() => AccessTools.Method(AccessTools.TypeByName("MegaCrit.Sts2.Core.Assets.AssetCache"), "GetTexture2D");
 
         [HarmonyPrefix]
-        public static bool Prefix(ref string __0, ref string __result)
+        public static bool Prefix(ref string path)
         {
-            // 如果游戏试图加载我们的选项图标，直接替换为官方的锻造图标
-            if (__0 != null && __0.Contains("myfirstmod_sacrifice_for_reward"))
+            // 发现游戏要加载我们的那张不存在的图片时，直接劫持
+            if (path != null && path.Contains("option_myfirstmod_sacrifice_for_reward"))
             {
-                __result = "ui/rest_site/option_smith.png"; 
-                return false; // 跳过原方法，直接返回我们设定的图标
+                // 强制篡改成官方锻造图标
+                path = "ui/rest_site/option_smith.png";
+                Godot.GD.Print($"[MyFirstMod] 成功拦截错误图片请求，替换为: {path}");
             }
-            return true;
+            return true; 
         }
     }
 }
