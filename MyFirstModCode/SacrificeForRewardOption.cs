@@ -19,7 +19,7 @@ namespace MyFirstModCode
         public SacrificeForRewardOption(Player owner) : base(owner) { }
         public override string OptionId => "MYFIRSTMOD_SACRIFICE_FOR_REWARD";
         
-        // 描述是虚属性，可以安全重写，不会报错
+        // 描述是虚属性，可以安全重写
         public override LocString Description => new LocString("rest_site_ui", "删除两张卡，并视删除卡的价值获得一次卡牌奖励。");
 
         public override bool IsEnabled
@@ -51,12 +51,24 @@ namespace MyFirstModCode
             {
                 var prefsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.CardSelection.CardSelectorPrefs");
                 if (prefsType == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardSelectorPrefs"); return false; }
-                
-                // 【终极修复】使用反射直接设置私有字段，绕过只读属性的限制
-                var prefs = Activator.CreateInstance(prefsType);
-                AccessTools.Field(prefsType, "<MinSelect>k__BackingField")?.SetValue(prefs, 2);
-                AccessTools.Field(prefsType, "<MaxSelect>k__BackingField")?.SetValue(prefs, 2);
-                AccessTools.Field(prefsType, "<Prompt>k__BackingField")?.SetValue(prefs, new LocString("rest_site_ui", "选择两张卡牌进行重塑"));
+
+                var prompt = new LocString("rest_site_ui", "选择两张卡牌进行重塑");
+                object prefs = null;
+
+                // 【终极修复】优先尝试使用构造函数 (LocString, int, int)
+                try
+                {
+                    prefs = Activator.CreateInstance(prefsType, new object[] { prompt, 2, 2 });
+                    Godot.GD.Print("[MyFirstMod] 成功通过构造函数创建 CardSelectorPrefs");
+                }
+                catch (Exception e)
+                {
+                    Godot.GD.Print($"[MyFirstMod] 构造函数失败，尝试反射字段: {e.Message}");
+                    prefs = Activator.CreateInstance(prefsType);
+                    AccessTools.Field(prefsType, "<MinSelect>k__BackingField")?.SetValue(prefs, 2);
+                    AccessTools.Field(prefsType, "<MaxSelect>k__BackingField")?.SetValue(prefs, 2);
+                    AccessTools.Field(prefsType, "<Prompt>k__BackingField")?.SetValue(prefs, prompt);
+                }
 
                 var method = AccessTools.Method(typeof(CardSelectCmd), "FromDeckGeneric");
                 if (method == null) { Godot.GD.Print("[MyFirstMod] 找不到 FromDeckGeneric"); return false; }
