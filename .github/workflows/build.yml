@@ -13,11 +13,9 @@ jobs:
       run: dotnet restore MyFirstMod.csproj
     - name: Build Mod
       run: dotnet build MyFirstMod.csproj -c Release
-    - name: Locate DLL (Debug)
-      run: dir /s /b MyFirstMod.dll
     - name: Upload DLL
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        # 使用绝对路径强制抓取，确保万无一失
-        path: ${{ github.workspace }}/bin/Release/net9.0/MyFirstMod.dll
+        # 这是最标准的路径，只要能编译成功，就一定能抓取到
+        path: bin/Release/net9.0/MyFirstMod.dll
