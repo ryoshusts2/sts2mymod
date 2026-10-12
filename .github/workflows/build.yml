@@ -17,5 +17,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        # 就是这里！加上了 ./ 使得路径更加明确
-        path: ./bin/Release/net9.0/MyFirstMod.dll
+        path: '**/MyFirstMod.dll'
