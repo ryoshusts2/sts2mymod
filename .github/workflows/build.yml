@@ -12,10 +12,11 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore MyFirstMod.csproj
     - name: Build Mod
-      run: dotnet build MyFirstMod.csproj -c Release
+      # 关键：强制指定编译输出到当前目录的 publish 文件夹
+      run: dotnet build MyFirstMod.csproj -c Release -o ./publish
     - name: Upload DLL
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        # 使用最死板的绝对路径，精确指向 .NET 默认输出目录
-        path: bin/Release/net9.0/MyFirstMod.dll
+        # 直接去刚设定的 publish 文件夹里拿
+        path: ./publish/MyFirstMod.dll
