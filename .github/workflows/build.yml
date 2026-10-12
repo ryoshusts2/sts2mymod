@@ -17,4 +17,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: MyFirstMod
-        path: ${{ github.workspace }}/**/MyFirstMod.dll
+        # 使用最死板的绝对路径，精确指向 .NET 默认输出目录
+        path: bin/Release/net9.0/MyFirstMod.dll
