@@ -88,15 +88,11 @@ namespace MyFirstModCode
                             if (taskResult is IEnumerable enumerableResult)
                             {
                                 selectedCards = enumerableResult.Cast<object>().ToList();
-                                Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckForRemoval（参数数量: {ps.Length}），拿到 {selectedCards.Count} 张牌");
                                 break;
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Godot.GD.Print($"[MyFirstMod] 调用 FromDeckForRemoval（参数数量: {ps.Length}）失败: {ex.InnerException?.Message ?? ex.Message}");
-                    }
+                    catch { }
                 }
             }
             catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); return false; }
@@ -106,36 +102,41 @@ namespace MyFirstModCode
 
             try
             {
+                // 1. 严格计算权重
                 int targetQ = 1;
-                if (selectedCards.Count == 1) { targetQ = GetRarityWeight(selectedCards[0]); }
-                else { int w1 = GetRarityWeight(selectedCards[0]); int w2 = GetRarityWeight(selectedCards[1]); targetQ = Math.Clamp((w1 + w2) / 2, 1, 4); }
+                if (selectedCards.Count == 1)
+                {
+                    targetQ = GetRarityWeight(selectedCards[0]);
+                }
+                else
+                {
+                    int w1 = GetRarityWeight(selectedCards[0]);
+                    int w2 = GetRarityWeight(selectedCards[1]);
+                    targetQ = (int)Math.Round((w1 + w2) / 2.0); 
+                    if (targetQ < 1) targetQ = 1;
+                    if (targetQ > 4) targetQ = 4;
+                }
+                string targetRarityStr = targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" };
+                Godot.GD.Print($"[MyFirstMod] 计算完毕：目标品质等级为 {targetQ}（{targetRarityStr}）");
 
-                // 【核心修复】遍历所有 RemoveFromDeck 重载，精确匹配单卡片版本 (CardModel, bool)
+                // 2. 删除卡牌（已同步状态，不回滚）
                 var removeMethods = AccessTools.GetDeclaredMethods(typeof(CardPileCmd)).Where(m => m.Name == "RemoveFromDeck").ToList();
                 MethodInfo singleCardMethod = null;
                 foreach (var m in removeMethods)
                 {
                     var ps = m.GetParameters();
-                    // 参数数量为1或2，且第一个参数名称为 CardModel，第二个参数为 bool（可选）
-                    if (ps.Length >= 1 && ps.Length <= 2 && ps[0].ParameterType.Name == "CardModel")
-                    {
-                        singleCardMethod = m;
-                        break;
-                    }
+                    if (ps.Length >= 1 && ps.Length <= 2 && ps[0].ParameterType.Name == "CardModel") { singleCardMethod = m; break; }
                 }
+                if (singleCardMethod == null) { Godot.GD.Print("[MyFirstMod] 找不到 RemoveFromDeck 重载"); return false; }
 
-                if (singleCardMethod == null) { Godot.GD.Print("[MyFirstMod] 找不到单卡片版本的 RemoveFromDeck"); return false; }
-
-                Godot.GD.Print($"[MyFirstMod] 找到单卡片 RemoveFromDeck，准备逐张删除...");
                 foreach (var card in selectedCards)
                 {
-                    // 传入卡牌和 showPreview 参数（默认为 true）
                     var removeTask = singleCardMethod.Invoke(null, new object[] { card, true });
                     if (removeTask is Task taskToWait) await taskToWait;
                 }
-                Godot.GD.Print($"[MyFirstMod] 成功删除了 {selectedCards.Count} 张卡（已同步状态，绝不回滚）");
+                Godot.GD.Print($"[MyFirstMod] 成功删除了 {selectedCards.Count} 张卡");
 
-                // --- 发奖励逻辑 ---
+                // 3. 发放奖励（严格使用目标稀有度过滤器）
                 var cardModelType = FindTypeByName("CardModel");
                 var cardPool = AccessTools.Property(Owner.Character.GetType(), "CardPool")?.GetValue(Owner.Character);
                 var poolType = FindTypeByName("CardPoolModel");
@@ -143,21 +144,26 @@ namespace MyFirstModCode
                 poolsList.Add(cardPool);
 
                 var rarityType = FindTypeByName("CardRarity");
-                object rewardRarity = Enum.Parse(rarityType, targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" });
+                object rewardRarity = Enum.Parse(rarityType, targetRarityStr);
 
                 var optionsType = FindTypeByName("CardCreationOptions");
                 var sourceType = FindTypeByName("CardCreationSource");
                 var oddsType = FindTypeByName("CardRarityOddsType");
                 var cardRewardType = FindTypeByName("CardReward");
 
-                var filterMethod = typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic);
-                var filterDelegate = Delegate.CreateDelegate(typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool)), filterMethod);
+                // 【核心修复】构建一个同时检查“合规牌”和“目标稀有度”的过滤器，绝不让游戏随机抽卡
+                var parameter = Expression.Parameter(cardModelType, "card");
+                var isValidCall = Expression.Call(typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic), Expression.Convert(parameter, typeof(object)));
+                
+                var rarityProp = Expression.Property(parameter, "Rarity");
+                var targetRarityConst = Expression.Constant(rewardRarity, rarityProp.Type);
+                var rarityCheck = Expression.Equal(rarityProp, targetRarityConst);
+
+                var body = Expression.AndAlso(isValidCall, rarityCheck);
+                var filterDelegate = Expression.Lambda(typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool)), body, parameter).Compile();
 
                 object options = Activator.CreateInstance(optionsType, new object[] {
-                    poolsList,
-                    Enum.Parse(sourceType, "Other"),
-                    Enum.Parse(oddsType, "Uniform"),
-                    filterDelegate
+                    poolsList, Enum.Parse(sourceType, "Other"), Enum.Parse(oddsType, "Uniform"), filterDelegate
                 });
 
                 object reward = null;
@@ -229,6 +235,9 @@ namespace MyFirstModCode
             catch { return false; }
         }
 
-        private static int GetRarityWeight(object card) => AccessTools.Property(card.GetType(), "Rarity")?.GetValue(card)?.ToString() switch { "Basic" => 1, "Common" => 1, "Uncommon" => 2, "Rare" => 3, "Ancient" => 4, _ => 1 };
+        private static int GetRarityWeight(object card) => AccessTools.Property(card.GetType(), "Rarity")?.GetValue(card)?.ToString() switch 
+        { 
+            "Basic" => 1, "Common" => 1, "Uncommon" => 2, "Rare" => 3, "Ancient" => 4, _ => 1 
+        };
     }
 }
