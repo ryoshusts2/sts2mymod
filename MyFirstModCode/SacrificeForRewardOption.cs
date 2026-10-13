@@ -49,7 +49,6 @@ namespace MyFirstModCode
             List<object> selectedCards = null;
             try
             {
-                // 1. 反射创建 CardSelectorPrefs 对象（允许选1到2张）
                 var prefsType = FindTypeByName("CardSelectorPrefs");
                 if (prefsType == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardSelectorPrefs"); return false; }
 
@@ -63,7 +62,6 @@ namespace MyFirstModCode
                 }
                 if (prefs == null) return false;
 
-                // 2. 【核心修复】动态匹配 FromDeckForRemoval 的重载方法，防止 Parameter count mismatch
                 var methods = AccessTools.GetDeclaredMethods(typeof(CardSelectCmd))
                     .Where(m => m.Name == "FromDeckForRemoval")
                     .OrderBy(m => m.GetParameters().Length)
@@ -74,13 +72,10 @@ namespace MyFirstModCode
                     var ps = method.GetParameters();
                     var args = new List<object> { Owner, prefs };
 
-                    // 自动补齐可能缺失的参数（如过滤器、默认值等）
                     for (int i = 2; i < ps.Length; i++)
                     {
-                        if (ps[i].ParameterType.IsValueType)
-                            args.Add(Activator.CreateInstance(ps[i].ParameterType));
-                        else
-                            args.Add(null);
+                        if (ps[i].ParameterType.IsValueType) args.Add(Activator.CreateInstance(ps[i].ParameterType));
+                        else args.Add(null);
                     }
 
                     try
@@ -111,34 +106,42 @@ namespace MyFirstModCode
 
             try
             {
-                // 3. 计算稀有度权重
                 int targetQ = 1;
-                if (selectedCards.Count == 1)
-                {
-                    targetQ = GetRarityWeight(selectedCards[0]);
-                }
-                else
-                {
-                    int w1 = GetRarityWeight(selectedCards[0]);
-                    int w2 = GetRarityWeight(selectedCards[1]);
-                    targetQ = Math.Clamp((w1 + w2) / 2, 1, 4);
-                }
+                if (selectedCards.Count == 1) { targetQ = GetRarityWeight(selectedCards[0]); }
+                else { int w1 = GetRarityWeight(selectedCards[0]); int w2 = GetRarityWeight(selectedCards[1]); targetQ = Math.Clamp((w1 + w2) / 2, 1, 4); }
 
-                // 4. 【核心修复】使用游戏原生的 CardPileCmd.RemoveFromDeck 彻底删除卡牌（自带同步，防止回滚）
                 var cardModelType = FindTypeByName("CardModel");
                 var listType = typeof(List<>).MakeGenericType(cardModelType);
                 var selectedCardList = (IList)Activator.CreateInstance(listType);
                 foreach (var card in selectedCards) { selectedCardList.Add(card); }
 
-                var removeMethod = AccessTools.Method(typeof(CardPileCmd), "RemoveFromDeck");
-                if (removeMethod == null) { Godot.GD.Print("[MyFirstMod] 找不到 RemoveFromDeck 方法"); return false; }
+                // 【终极修复】精确遍历寻找参数数量为1、参数类型为泛型集合的 RemoveFromDeck 方法，解决 Ambiguous match
+                var removeMethods = AccessTools.GetDeclaredMethods(typeof(CardPileCmd)).Where(m => m.Name == "RemoveFromDeck").ToList();
+                MethodInfo removeMethod = null;
+                foreach (var m in removeMethods)
+                {
+                    var ps = m.GetParameters();
+                    if (ps.Length == 1)
+                    {
+                        var pt = ps[0].ParameterType;
+                        if (pt.IsGenericType && pt.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                        {
+                            if (pt.GetGenericArguments()[0].Name == "CardModel")
+                            {
+                                removeMethod = m;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (removeMethod == null) { Godot.GD.Print("[MyFirstMod] 找不到合适的 RemoveFromDeck 重载方法"); return false; }
 
                 var removeTask = removeMethod.Invoke(null, new object[] { selectedCardList });
                 if (removeTask is Task taskToWait) await taskToWait;
-
                 Godot.GD.Print($"[MyFirstMod] 成功调用 RemoveFromDeck 删除了 {selectedCardList.Count} 张卡（已同步状态，绝不回滚）");
 
-                // 5. 发放奖励逻辑
+                // --- 发奖励逻辑 ---
                 var cardPool = AccessTools.Property(Owner.Character.GetType(), "CardPool")?.GetValue(Owner.Character);
                 var poolType = FindTypeByName("CardPoolModel");
                 var poolsList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(poolType));
