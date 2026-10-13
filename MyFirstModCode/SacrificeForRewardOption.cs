@@ -22,31 +22,6 @@ namespace MyFirstModCode
 
         private static Type FindTypeByName(string name) => AccessTools.AllTypes().FirstOrDefault(t => t.Name == name);
 
-        // 万能构造函数调用器：自动匹配参数，防止 Constructor not found
-        private static object CreateInstanceWithDefaults(Type type, Type sourceType, Type oddsType)
-        {
-            if (type == null) return null;
-            foreach (var ctor in type.GetConstructors())
-            {
-                try
-                {
-                    var ps = ctor.GetParameters();
-                    var args = new List<object>();
-                    foreach (var p in ps)
-                    {
-                        if (p.ParameterType == sourceType) args.Add(Enum.Parse(sourceType, "Other"));
-                        else if (p.ParameterType == oddsType) args.Add(Enum.Parse(oddsType, "Uniform"));
-                        else if (p.ParameterType.IsValueType) args.Add(Activator.CreateInstance(p.ParameterType));
-                        else if (p.ParameterType.IsArray) args.Add(Array.CreateInstance(p.ParameterType.GetElementType(), 0));
-                        else args.Add(null);
-                    }
-                    return ctor.Invoke(args.ToArray());
-                }
-                catch { }
-            }
-            return null;
-        }
-
         public override bool IsEnabled
         {
             get
@@ -149,43 +124,55 @@ namespace MyFirstModCode
 
                 var rewardCard = eligible[new Random().Next(eligible.Count)];
 
-                // 【终极修复】使用万能构造函数调用器
+                // 【终极修复】显式构建正确的枚举和空卡池类型，绕过构造函数匹配难题
+                var optionsType = FindTypeByName("CardCreationOptions");
                 var sourceType = FindTypeByName("CardCreationSource");
                 var oddsType = FindTypeByName("CardRarityOddsType");
-                var optionsType = FindTypeByName("CardCreationOptions");
-                
-                object options = CreateInstanceWithDefaults(optionsType, sourceType, oddsType);
-                if (options == null) { Godot.GD.Print("[MyFirstMod] 无法创建 CardCreationOptions"); return false; }
+                var poolType = FindTypeByName("CardPoolModel");
 
+                if (optionsType == null || sourceType == null || oddsType == null || poolType == null)
+                {
+                    Godot.GD.Print("[MyFirstMod] 无法找到必要的类型");
+                    return false;
+                }
+
+                // 创建空的 List<CardPoolModel>
+                var emptyPools = Activator.CreateInstance(typeof(List<>).MakeGenericType(poolType));
+
+                // 显式调用 CardCreationOptions 的构造函数
+                object options = Activator.CreateInstance(optionsType, new object[] {
+                    emptyPools,
+                    Enum.Parse(sourceType, "Other"),
+                    Enum.Parse(oddsType, "Uniform"),
+                    null // 可选参数 Func<CardModel, bool>?
+                });
+
+                if (options == null)
+                {
+                    Godot.GD.Print("[MyFirstMod] 无法创建 CardCreationOptions 实例");
+                    return false;
+                }
+
+                // 构建 CardReward
                 var cardModelType = FindTypeByName("CardModel");
-                var listType = typeof(List<>).MakeGenericType(cardModelType);
-                var cardList = (IList)Activator.CreateInstance(listType);
+                var cardList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(cardModelType));
                 cardList.Add(rewardCard);
 
                 var cardRewardType = FindTypeByName("CardReward");
-                object reward = null;
-                foreach (var ctor in cardRewardType.GetConstructors())
+                var rewardCtor = AccessTools.Constructor(cardRewardType, new Type[] {
+                    typeof(IEnumerable<>).MakeGenericType(cardModelType),
+                    sourceType,
+                    typeof(Player),
+                    optionsType
+                });
+
+                if (rewardCtor == null)
                 {
-                    try
-                    {
-                        var ps = ctor.GetParameters();
-                        var args = new List<object>();
-                        foreach (var p in ps)
-                        {
-                            if (p.ParameterType.IsAssignableFrom(typeof(IEnumerable<>).MakeGenericType(cardModelType))) args.Add(cardList);
-                            else if (p.ParameterType == sourceType) args.Add(Enum.Parse(sourceType, "Other"));
-                            else if (p.ParameterType == typeof(Player)) args.Add(Owner);
-                            else if (p.ParameterType == options.GetType()) args.Add(options);
-                            else if (p.ParameterType.IsValueType) args.Add(Activator.CreateInstance(p.ParameterType));
-                            else args.Add(null);
-                        }
-                        reward = ctor.Invoke(args.ToArray());
-                        if (reward != null) break;
-                    }
-                    catch { }
+                    Godot.GD.Print("[MyFirstMod] 找不到 CardReward 构造函数");
+                    return false;
                 }
 
-                if (reward == null) { Godot.GD.Print("[MyFirstMod] 无法创建 CardReward"); return false; }
+                var reward = rewardCtor.Invoke(new object[] { cardList, Enum.Parse(sourceType, "Other"), Owner, options });
 
                 var rewardsListType = typeof(List<>).MakeGenericType(FindTypeByName("Reward"));
                 var rewardsList = (IList)Activator.CreateInstance(rewardsListType);
