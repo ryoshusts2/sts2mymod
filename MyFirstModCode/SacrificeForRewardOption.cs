@@ -20,7 +20,6 @@ namespace MyFirstModCode
         public override string OptionId => "MYFIRSTMOD_SACRIFICE_FOR_REWARD";
         public override LocString Description => new LocString("rest_site_ui", "删除两张卡，并视删除卡的价值获得一次卡牌奖励。");
 
-        // 辅助方法：全局模糊搜索类型，避免因为命名空间变化而导致找不到类型
         private static Type FindTypeByName(string name) => AccessTools.AllTypes().FirstOrDefault(t => t.Name == name);
 
         public override bool IsEnabled
@@ -126,8 +125,6 @@ namespace MyFirstModCode
                 if (allCards == null) return false;
 
                 var rarityType = FindTypeByName("CardRarity");
-                if (rarityType == null) { Godot.GD.Print("[MyFirstMod] 严重错误: 找不到 CardRarity"); return false; }
-                
                 object rewardRarity = Enum.Parse(rarityType, targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" });
 
                 var eligible = allCards.Where(c => {
@@ -149,25 +146,24 @@ namespace MyFirstModCode
 
                 var rewardCard = eligible[new Random().Next(eligible.Count)];
 
-                // 【核心修复】动态模糊搜索 Enum 类型，防止命名空间硬编码导致找不到
                 var optionsType = FindTypeByName("CardCreationOptions");
                 var sourceType = FindTypeByName("CardCreationSource");
                 var oddsType = FindTypeByName("CardRarityOddsType");
+                var poolType = FindTypeByName("CardPoolModel");
 
-                if (sourceType == null || oddsType == null) {
-                    Godot.GD.Print("[MyFirstMod] 严重错误: 找不到 CardCreationSource 或 CardRarityOddsType");
-                    return false;
-                }
+                // 【终极修复】构造正确类型的 CardPoolModel 集合，避免构造函数找不到
+                var listType = typeof(List<>).MakeGenericType(poolType);
+                var cardPools = Activator.CreateInstance(listType);
 
                 var options = Activator.CreateInstance(optionsType, new object[] {
-                    Array.Empty<object>(),
+                    cardPools,
                     Enum.Parse(sourceType, "Other"),
                     Enum.Parse(oddsType, "Uniform")
                 });
 
                 var cardModelType = FindTypeByName("CardModel");
-                var listType = typeof(List<>).MakeGenericType(cardModelType);
-                var cardList = (IList)Activator.CreateInstance(listType);
+                var cardListType = typeof(List<>).MakeGenericType(cardModelType);
+                var cardList = (IList)Activator.CreateInstance(cardListType);
                 cardList.Add(rewardCard);
 
                 var cardRewardType = FindTypeByName("CardReward");
@@ -178,7 +174,7 @@ namespace MyFirstModCode
                     optionsType 
                 });
                 
-                if (rewardCtor == null) return false;
+                if (rewardCtor == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardReward 构造函数"); return false; }
                 var reward = rewardCtor.Invoke(new object[] { cardList, Enum.Parse(sourceType, "Other"), Owner, options });
 
                 var rewardsListType = typeof(List<>).MakeGenericType(FindTypeByName("Reward"));
