@@ -2,8 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
-using System.Reflection;
 using System.Threading.Tasks;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
@@ -11,6 +9,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.RestSite;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Rewards;
+using MegaCrit.Sts2.Core.CardSelection; // 必须引用，用于 CardSelectorPrefs
 
 namespace MyFirstModCode
 {
@@ -49,57 +48,44 @@ namespace MyFirstModCode
             List<object> selectedCards = null;
             try
             {
-                var prefsType = FindTypeByName("CardSelectorPrefs");
-                if (prefsType == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardSelectorPrefs"); return false; }
-
-                // 硬编码中文提示，避免本地化缺失引起的显示问题
-                var prompt = new LocString("rest_site_ui", "选择两张卡牌进行重塑");
-                object prefs = null;
-                foreach (var args in new object[][] { new object[] { prompt, 2, 2 } })
+                // 【终极修复】完全按照游戏原生逻辑：使用 FromDeckForRemoval 和 RemoveSelectionPrompt
+                var prefs = new CardSelectorPrefs(CardSelectorPrefs.RemoveSelectionPrompt, 2);
+                var selected = await CardSelectCmd.FromDeckForRemoval(Owner, prefs);
+                
+                if (selected != null)
                 {
-                    try { prefs = Activator.CreateInstance(prefsType, args); break; } catch { }
-                }
-                if (prefs == null) return false;
-
-                var methods = AccessTools.GetDeclaredMethods(typeof(CardSelectCmd)).Where(m => m.Name == "FromDeckGeneric").OrderBy(m => m.GetParameters().Length).ToList();
-                foreach (var method in methods)
-                {
-                    var args = new List<object> { Owner, prefs };
-                    var ps = method.GetParameters();
-                    for (int i = 2; i < ps.Length; i++) args.Add(ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null);
-
-                    try
-                    {
-                        var resultObj = method.Invoke(null, args.ToArray());
-                        if (resultObj is Task task)
-                        {
-                            await task;
-                            var taskResult = task.GetType().GetProperty("Result")?.GetValue(task);
-                            if (taskResult is IEnumerable enumerableResult) { selectedCards = enumerableResult.Cast<object>().ToList(); break; }
-                        }
-                    }
-                    catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 调用 FromDeckGeneric 失败: {ex.InnerException?.Message ?? ex.Message}"); }
+                    selectedCards = selected.Cast<object>().ToList();
+                    Godot.GD.Print($"[MyFirstMod] 选卡成功，玩家选择了 {selectedCards.Count} 张牌");
                 }
             }
             catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); return false; }
 
-            // 严格要求选2张卡
-            if (selectedCards == null || selectedCards.Count < 2) return false;
+            if (selectedCards == null || selectedCards.Count < 1) return false;
 
+            // 校验选中的卡牌，防止选到违规牌
             foreach (var card in selectedCards) { if (!IsValidCard(card)) return false; }
 
             try
             {
-                int w1 = GetRarityWeight(selectedCards[0]);
-                int w2 = GetRarityWeight(selectedCards[1]);
-                int targetQ = Math.Clamp((w1 + w2) / 2, 1, 4);
+                // 1. 计算稀有度权重（允许选1张或2张）
+                int targetQ = 1;
+                if (selectedCards.Count == 1)
+                {
+                    targetQ = GetRarityWeight(selectedCards[0]);
+                }
+                else
+                {
+                    int w1 = GetRarityWeight(selectedCards[0]);
+                    int w2 = GetRarityWeight(selectedCards[1]);
+                    targetQ = Math.Clamp((w1 + w2) / 2, 1, 4);
+                }
 
-                var deck = AccessTools.Property(Owner.GetType(), "Deck")?.GetValue(Owner);
-                var removeMethod = AccessTools.Method(deck.GetType(), "RemoveCard");
-                foreach (var card in selectedCards) removeMethod?.Invoke(deck, new object[] { card });
-                Godot.GD.Print($"[MyFirstMod] 成功删除了 2 张卡！准备发奖励...");
+                // 2. 【核心修复】使用游戏原生 CardPileCmd.RemoveFromDeck 彻底删除卡牌，自带状态同步
+                var selectedCardList = selectedCards.Cast<MegaCrit.Sts2.Core.Entities.Cards.CardModel>().ToList();
+                await CardPileCmd.RemoveFromDeck(selectedCardList);
+                Godot.GD.Print($"[MyFirstMod] 成功调用 RemoveFromDeck 删除了 {selectedCardList.Count} 张卡（已同步状态）");
 
-                // 【终极修复】不再手动构建 CardModel 列表，改用 CardCreationOptions 让游戏自己生成奖励
+                // 3. 发放奖励（与我们之前成功的逻辑一致）
                 var cardPool = AccessTools.Property(Owner.Character.GetType(), "CardPool")?.GetValue(Owner.Character);
                 var poolType = FindTypeByName("CardPoolModel");
                 var poolsList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(poolType));
@@ -114,19 +100,16 @@ namespace MyFirstModCode
                 var cardModelType = FindTypeByName("CardModel");
                 var cardRewardType = FindTypeByName("CardReward");
 
-                // 创建过滤器委托，防止基础卡、诅咒等作为奖励出现
-                var filterMethod = typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic);
+                var filterMethod = typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
                 var filterDelegate = Delegate.CreateDelegate(typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool)), filterMethod);
 
-                // 构造 CardCreationOptions，加入我们自己的过滤器
                 object options = Activator.CreateInstance(optionsType, new object[] {
                     poolsList,
                     Enum.Parse(sourceType, "Other"),
                     Enum.Parse(oddsType, "Uniform"),
-                    filterDelegate // 第四个参数是过滤器
+                    filterDelegate
                 });
 
-                // 使用万能构造函数匹配器实例化 CardReward
                 object reward = null;
                 foreach (var ctor in cardRewardType.GetConstructors())
                 {
@@ -137,7 +120,7 @@ namespace MyFirstModCode
                         foreach (var p in ps)
                         {
                             if (p.ParameterType == optionsType) args.Add(options);
-                            else if (p.ParameterType == typeof(int)) args.Add(1); // 数量1
+                            else if (p.ParameterType == typeof(int)) args.Add(1);
                             else if (p.ParameterType == typeof(Player)) args.Add(Owner);
                             else if (p.ParameterType.IsValueType) args.Add(Activator.CreateInstance(p.ParameterType));
                             else args.Add(null);
@@ -148,7 +131,7 @@ namespace MyFirstModCode
                     catch { }
                 }
 
-                if (reward == null) { Godot.GD.Print("[MyFirstMod] 依然找不到匹配的 CardReward 构造函数"); return false; }
+                if (reward == null) { Godot.GD.Print("[MyFirstMod] 找不到匹配的 CardReward 构造函数"); return false; }
 
                 var rewardsListType = typeof(List<>).MakeGenericType(FindTypeByName("Reward"));
                 var rewardsList = (IList)Activator.CreateInstance(rewardsListType);
