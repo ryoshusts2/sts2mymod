@@ -46,6 +46,9 @@ namespace MyFirstModCode
             Godot.GD.Print("[MyFirstMod] ======== 玩家点击了重塑选项！开始执行 ========");
             if (Owner == null) return false;
 
+            // 【核心修复】将 cardModelType 提到所有 try 块之外，确保全方法可见
+            var cardModelType = FindTypeByName("CardModel");
+
             List<object> selectedCards = null;
             try
             {
@@ -55,7 +58,7 @@ namespace MyFirstModCode
                 var promptProp = AccessTools.Property(prefsType, "RemoveSelectionPrompt");
                 object prompt = promptProp?.GetValue(null) ?? new LocString("rest_site_ui", "选择卡牌删除");
 
-                // 【修复Bug1：允许返回】将 MinSelect 改为 0，玩家可点击返回键取消操作
+                // 【修复：允许返回】MinSelect 设为 0，玩家可点击返回键取消操作
                 object prefs = null;
                 foreach (var args in new object[][] { new object[] { prompt, 0, 2 } })
                 {
@@ -63,15 +66,12 @@ namespace MyFirstModCode
                 }
                 if (prefs == null) return false;
 
-                // 【修复Bug2：UI层过滤】根据源码 182679 行，FromDeckForRemoval 接受 filter 参数
-                // 我们直接构造 Func<CardModel, bool> 过滤器，让UI彻底隐藏不可删的卡牌
-                var cardModelType = FindTypeByName("CardModel");
+                // 【修复：UI过滤】根据源码，FromDeckForRemoval 支持 filter 参数，彻底隐藏不可删的牌
                 var funcType = typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool));
                 var parameter = Expression.Parameter(cardModelType, "card");
                 var methodCall = Expression.Call(typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic), Expression.Convert(parameter, typeof(object)));
                 var filterDelegate = Expression.Lambda(funcType, methodCall, parameter).Compile();
 
-                // 动态查找 FromDeckForRemoval 的重载方法
                 var methods = AccessTools.GetDeclaredMethods(typeof(CardSelectCmd))
                     .Where(m => m.Name == "FromDeckForRemoval")
                     .OrderBy(m => m.GetParameters().Length)
@@ -82,7 +82,6 @@ namespace MyFirstModCode
                     var ps = method.GetParameters();
                     var args = new List<object> { Owner, prefs };
                     
-                    // 尝试把 filter 作为第三个参数传入（源码签名：Player, CardSelectorPrefs, Func<CardModel,bool>?）
                     if (ps.Length >= 3 && ps[2].ParameterType.Name.Contains("Func"))
                     {
                         args.Add(filterDelegate);
@@ -106,24 +105,24 @@ namespace MyFirstModCode
                             if (taskResult is IEnumerable enumerableResult)
                             {
                                 selectedCards = enumerableResult.Cast<object>().ToList();
-                                Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckForRemoval，拿到 {selectedCards.Count} 张牌（UI层已过滤任务牌）");
+                                Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckForRemoval，拿到 {selectedCards.Count} 张牌（UI已过滤）");
                                 break;
                             }
                         }
                     }
-                    catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 调用 FromDeckForRemoval 失败: {ex.InnerException?.Message ?? ex.Message}"); }
+                    catch { }
                 }
             }
             catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); return false; }
 
-            // 【修复Bug1：取消处理】如果玩家点了返回（选了0张），安全退出，不删卡不发奖
+            // 【修复：安全返回】玩家点击取消（0张）直接退出
             if (selectedCards == null || selectedCards.Count < 1)
             {
                 Godot.GD.Print("[MyFirstMod] 玩家取消了操作，安全返回篝火。");
                 return false;
             }
 
-            // 二次强校验（虽然UI层过滤了，但保险起见）
+            // 二次强校验兜底
             foreach (var card in selectedCards)
             {
                 if (!IsValidCard(card)) 
@@ -141,8 +140,9 @@ namespace MyFirstModCode
                 if (targetQ < 1) targetQ = 1;
                 if (targetQ > 4) targetQ = 4;
                 string targetRarityStr = targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" };
-                Godot.GD.Print($"[MyFirstMod] 计算完毕：目标品质等级为 {targetQ}（{targetRarityStr}）");
+                Godot.GD.Print($"[MyFirstMod] 目标品质: {targetQ} ({targetRarityStr})");
 
+                // 删卡
                 var removeMethods = AccessTools.GetDeclaredMethods(typeof(CardPileCmd)).Where(m => m.Name == "RemoveFromDeck").ToList();
                 MethodInfo singleCardMethod = null;
                 foreach (var m in removeMethods)
@@ -173,13 +173,13 @@ namespace MyFirstModCode
                 var oddsType = FindTypeByName("CardRarityOddsType");
                 var cardRewardType = FindTypeByName("CardReward");
 
-                var rewardFilterParam = Expression.Parameter(cardModelType, "card");
-                var isRewardValidCall = Expression.Call(typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic), Expression.Convert(rewardFilterParam, typeof(object)));
-                var rarityProp = Expression.Property(rewardFilterParam, "Rarity");
+                var rewardParam = Expression.Parameter(cardModelType, "card");
+                var isRewardValidCall = Expression.Call(typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic), Expression.Convert(rewardParam, typeof(object)));
+                var rarityProp = Expression.Property(rewardParam, "Rarity");
                 var targetRarityConst = Expression.Constant(rewardRarity, rarityProp.Type);
                 var rarityCheck = Expression.Equal(rarityProp, targetRarityConst);
                 var rewardBody = Expression.AndAlso(isRewardValidCall, rarityCheck);
-                var rewardFilterDelegate = Expression.Lambda(typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool)), rewardBody, rewardFilterParam).Compile();
+                var rewardFilterDelegate = Expression.Lambda(typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool)), rewardBody, rewardParam).Compile();
 
                 object options = Activator.CreateInstance(optionsType, new object[] {
                     poolsList, Enum.Parse(sourceType, "Other"), Enum.Parse(oddsType, "Uniform"), rewardFilterDelegate
@@ -233,8 +233,6 @@ namespace MyFirstModCode
             try
             {
                 Type t = card.GetType();
-                
-                // 排除不可移除的卡牌（游戏底层本身也会排除，这里做双重保险）
                 var isRemovableProp = AccessTools.Property(t, "IsRemovable");
                 if (isRemovableProp != null && !(bool)isRemovableProp.GetValue(card)) return false;
 
