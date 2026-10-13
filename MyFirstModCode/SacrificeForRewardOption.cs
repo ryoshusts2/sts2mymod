@@ -19,7 +19,6 @@ namespace MyFirstModCode
         public SacrificeForRewardOption(Player owner) : base(owner) { }
         public override string OptionId => "MYFIRSTMOD_SACRIFICE_FOR_REWARD";
         
-        // 描述是虚属性，可以安全重写
         public override LocString Description => new LocString("rest_site_ui", "删除两张卡，并视删除卡的价值获得一次卡牌奖励。");
 
         public override bool IsEnabled
@@ -37,7 +36,11 @@ namespace MyFirstModCode
                     foreach (var c in cards) { if (IsValidCard(c)) count++; }
                     return count >= 2;
                 }
-                catch { return false; }
+                catch (Exception ex)
+                {
+                    Godot.GD.Print($"[MyFirstMod] IsEnabled 报错: {ex.Message}");
+                    return false;
+                }
             }
         }
 
@@ -55,19 +58,32 @@ namespace MyFirstModCode
                 var prompt = new LocString("rest_site_ui", "选择两张卡牌进行重塑");
                 object prefs = null;
 
-                // 【终极修复】优先尝试使用构造函数 (LocString, int, int)
-                try
+                // 【终极修复】依次尝试多种构造函数签名，直到成功为止
+                var constructorAttempts = new object[][]
                 {
-                    prefs = Activator.CreateInstance(prefsType, new object[] { prompt, 2, 2 });
-                    Godot.GD.Print("[MyFirstMod] 成功通过构造函数创建 CardSelectorPrefs");
+                    new object[] { prompt, 2, 2 },
+                    new object[] { prompt, 2, 2, null },
+                    new object[] { prompt }
+                };
+
+                foreach (var args in constructorAttempts)
+                {
+                    try
+                    {
+                        prefs = Activator.CreateInstance(prefsType, args);
+                        Godot.GD.Print($"[MyFirstMod] 成功通过构造函数创建 CardSelectorPrefs（参数数量: {args.Length}）");
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        Godot.GD.Print($"[MyFirstMod] 构造函数尝试参数长度 {args.Length} 失败: {ex.Message}");
+                    }
                 }
-                catch (Exception e)
+
+                if (prefs == null)
                 {
-                    Godot.GD.Print($"[MyFirstMod] 构造函数失败，尝试反射字段: {e.Message}");
-                    prefs = Activator.CreateInstance(prefsType);
-                    AccessTools.Field(prefsType, "<MinSelect>k__BackingField")?.SetValue(prefs, 2);
-                    AccessTools.Field(prefsType, "<MaxSelect>k__BackingField")?.SetValue(prefs, 2);
-                    AccessTools.Field(prefsType, "<Prompt>k__BackingField")?.SetValue(prefs, prompt);
+                    Godot.GD.Print("[MyFirstMod] 所有构造函数尝试均失败，无法创建 CardSelectorPrefs");
+                    return false;
                 }
 
                 var method = AccessTools.Method(typeof(CardSelectCmd), "FromDeckGeneric");
@@ -161,9 +177,8 @@ namespace MyFirstModCode
             try
             {
                 Type t = card.GetType();
-                var isRemovableProp = AccessTools.Property(t, "IsRemovable");
-                if (isRemovableProp != null && !(bool)isRemovableProp.GetValue(card)) return false;
-
+                // 【修复】去掉了 IsRemovable 检查，因为游戏为了防止意外删除基础卡，通常把它设为了 false！
+                
                 string typeStr = AccessTools.Property(t, "Type")?.GetValue(card)?.ToString();
                 if (typeStr == "Curse" || typeStr == "Status" || typeStr == "Quest") return false;
 
