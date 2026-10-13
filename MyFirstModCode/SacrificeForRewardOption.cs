@@ -52,7 +52,8 @@ namespace MyFirstModCode
                 var prefsType = FindTypeByName("CardSelectorPrefs");
                 if (prefsType == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardSelectorPrefs"); return false; }
 
-                var prompt = new LocString("rest_site_ui", "SELECT_TWO_CARDS_FOR_REMODEL");
+                // 硬编码中文提示，避免本地化缺失引起的显示问题
+                var prompt = new LocString("rest_site_ui", "选择两张卡牌进行重塑");
                 object prefs = null;
                 foreach (var args in new object[][] { new object[] { prompt, 2, 2 } })
                 {
@@ -82,6 +83,7 @@ namespace MyFirstModCode
             }
             catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); return false; }
 
+            // 严格要求选2张卡
             if (selectedCards == null || selectedCards.Count < 2) return false;
 
             foreach (var card in selectedCards) { if (!IsValidCard(card)) return false; }
@@ -95,56 +97,36 @@ namespace MyFirstModCode
                 var deck = AccessTools.Property(Owner.GetType(), "Deck")?.GetValue(Owner);
                 var removeMethod = AccessTools.Method(deck.GetType(), "RemoveCard");
                 foreach (var card in selectedCards) removeMethod?.Invoke(deck, new object[] { card });
-                Godot.GD.Print("[MyFirstMod] 删卡成功！准备发奖励...");
+                Godot.GD.Print($"[MyFirstMod] 成功删除了 2 张卡！准备发奖励...");
 
+                // 【终极修复】不再手动构建 CardModel 列表，改用 CardCreationOptions 让游戏自己生成奖励
                 var cardPool = AccessTools.Property(Owner.Character.GetType(), "CardPool")?.GetValue(Owner.Character);
-                var allCardsProp = AccessTools.Property(cardPool.GetType(), "AllCards");
-                var allCards = (allCardsProp?.GetValue(cardPool) as IEnumerable)?.Cast<object>().ToList();
-                if (allCards == null) return false;
+                var poolType = FindTypeByName("CardPoolModel");
+                var poolsList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(poolType));
+                poolsList.Add(cardPool);
 
                 var rarityType = FindTypeByName("CardRarity");
                 object rewardRarity = Enum.Parse(rarityType, targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" });
 
-                var eligible = allCards.Where(c => {
-                    var rarity = AccessTools.Property(c.GetType(), "Rarity")?.GetValue(c)?.ToString();
-                    var type = AccessTools.Property(c.GetType(), "Type")?.GetValue(c)?.ToString();
-                    if (rarity == "Basic") return false;
-                    if (type == "Curse" || type == "Status" || type == "Quest") return false;
-                    return rarity == rewardRarity.ToString();
-                }).ToList();
-
-                if (!eligible.Any())
-                {
-                    eligible = allCards.Where(c => {
-                        var rarity = AccessTools.Property(c.GetType(), "Rarity")?.GetValue(c)?.ToString();
-                        var type = AccessTools.Property(c.GetType(), "Type")?.GetValue(c)?.ToString();
-                        return rarity != "Basic" && type != "Curse" && type != "Status" && type != "Quest";
-                    }).ToList();
-                }
-
-                var rewardCard = eligible[new Random().Next(eligible.Count)];
-
+                var optionsType = FindTypeByName("CardCreationOptions");
                 var sourceType = FindTypeByName("CardCreationSource");
                 var oddsType = FindTypeByName("CardRarityOddsType");
-                var optionsType = FindTypeByName("CardCreationOptions");
-                var poolType = FindTypeByName("CardPoolModel");
                 var cardModelType = FindTypeByName("CardModel");
                 var cardRewardType = FindTypeByName("CardReward");
 
-                // 1. 创建空的卡池列表
-                var emptyPools = Activator.CreateInstance(typeof(List<>).MakeGenericType(poolType));
+                // 创建过滤器委托，防止基础卡、诅咒等作为奖励出现
+                var filterMethod = typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic);
+                var filterDelegate = Delegate.CreateDelegate(typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool)), filterMethod);
+
+                // 构造 CardCreationOptions，加入我们自己的过滤器
                 object options = Activator.CreateInstance(optionsType, new object[] {
-                    emptyPools,
+                    poolsList,
                     Enum.Parse(sourceType, "Other"),
                     Enum.Parse(oddsType, "Uniform"),
-                    null
+                    filterDelegate // 第四个参数是过滤器
                 });
 
-                // 2. 构建奖励卡牌列表
-                var cardList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(cardModelType));
-                cardList.Add(rewardCard);
-
-                // 3. 万能匹配 CardReward 构造函数
+                // 使用万能构造函数匹配器实例化 CardReward
                 object reward = null;
                 foreach (var ctor in cardRewardType.GetConstructors())
                 {
@@ -154,12 +136,11 @@ namespace MyFirstModCode
                         var args = new List<object>();
                         foreach (var p in ps)
                         {
-                            if (p.ParameterType.IsAssignableFrom(typeof(IEnumerable<>).MakeGenericType(cardModelType))) args.Add(cardList);
-                            else if (p.ParameterType == sourceType) args.Add(Enum.Parse(sourceType, "Other"));
+                            if (p.ParameterType == optionsType) args.Add(options);
+                            else if (p.ParameterType == typeof(int)) args.Add(1); // 数量1
                             else if (p.ParameterType == typeof(Player)) args.Add(Owner);
-                            else if (p.ParameterType == options.GetType()) args.Add(options);
                             else if (p.ParameterType.IsValueType) args.Add(Activator.CreateInstance(p.ParameterType));
-                            else args.Add(null); // 处理同步器或其他可选参数
+                            else args.Add(null);
                         }
                         reward = ctor.Invoke(args.ToArray());
                         if (reward != null) break;
