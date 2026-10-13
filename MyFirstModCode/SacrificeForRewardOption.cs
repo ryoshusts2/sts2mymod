@@ -18,8 +18,10 @@ namespace MyFirstModCode
     {
         public SacrificeForRewardOption(Player owner) : base(owner) { }
         public override string OptionId => "MYFIRSTMOD_SACRIFICE_FOR_REWARD";
-        
         public override LocString Description => new LocString("rest_site_ui", "删除两张卡，并视删除卡的价值获得一次卡牌奖励。");
+
+        // 辅助方法：全局模糊搜索类型，避免因为命名空间变化而导致找不到类型
+        private static Type FindTypeByName(string name) => AccessTools.AllTypes().FirstOrDefault(t => t.Name == name);
 
         public override bool IsEnabled
         {
@@ -52,27 +54,19 @@ namespace MyFirstModCode
             List<object> selectedCards = null;
             try
             {
-                var prefsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.CardSelection.CardSelectorPrefs");
+                var prefsType = FindTypeByName("CardSelectorPrefs");
                 if (prefsType == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardSelectorPrefs"); return false; }
 
                 var prompt = new LocString("rest_site_ui", "选择两张卡牌进行重塑");
                 object prefs = null;
 
-                // 1. 创建 CardSelectorPrefs 对象
                 var constructorAttempts = new object[][] { new object[] { prompt, 2, 2 } };
                 foreach (var args in constructorAttempts)
                 {
-                    try
-                    {
-                        prefs = Activator.CreateInstance(prefsType, args);
-                        Godot.GD.Print($"[MyFirstMod] 成功创建 CardSelectorPrefs（参数数量: {args.Length}）");
-                        break;
-                    }
-                    catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 构造函数失败: {ex.Message}"); }
+                    try { prefs = Activator.CreateInstance(prefsType, args); break; } catch { }
                 }
                 if (prefs == null) return false;
 
-                // 2. 动态匹配 FromDeckGeneric 并正确处理异步 Task 返回值
                 var cardSelectCmdType = typeof(CardSelectCmd);
                 var methods = AccessTools.GetDeclaredMethods(cardSelectCmdType)
                     .Where(m => m.Name == "FromDeckGeneric")
@@ -86,54 +80,29 @@ namespace MyFirstModCode
 
                     for (int i = 2; i < parameters.Length; i++)
                     {
-                        if (parameters[i].ParameterType.IsValueType)
-                            args.Add(Activator.CreateInstance(parameters[i].ParameterType));
-                        else
-                            args.Add(null);
+                        args.Add(parameters[i].ParameterType.IsValueType ? Activator.CreateInstance(parameters[i].ParameterType) : null);
                     }
 
                     try
                     {
                         var resultObj = method.Invoke(null, args.ToArray());
-
-                        // 【核心修复】处理异步 Task 返回值
                         if (resultObj is Task task)
                         {
-                            await task; // 等待玩家选卡完成
-                            var taskResultProp = task.GetType().GetProperty("Result");
-                            var taskResult = taskResultProp?.GetValue(task);
+                            await task;
+                            var taskResult = task.GetType().GetProperty("Result")?.GetValue(task);
                             if (taskResult is IEnumerable enumerableResult)
                             {
                                 selectedCards = enumerableResult.Cast<object>().ToList();
-                                Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckGeneric (异步)，拿到 {selectedCards.Count} 张牌");
                                 break;
                             }
                         }
-                        else if (resultObj is IEnumerable enumerable)
-                        {
-                            selectedCards = enumerable.Cast<object>().ToList();
-                            Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckGeneric (同步)，拿到 {selectedCards.Count} 张牌");
-                            break;
-                        }
                     }
-                    catch (Exception ex)
-                    {
-                        Godot.GD.Print($"[MyFirstMod] 调用 FromDeckGeneric 失败: {ex.InnerException?.Message ?? ex.Message}");
-                    }
+                    catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 调用 FromDeckGeneric 失败: {ex.InnerException?.Message ?? ex.Message}"); }
                 }
             }
-            catch (Exception ex) 
-            { 
-                Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); 
-                return false; 
-            }
+            catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); return false; }
 
-            // 如果玩家取消选卡，或者选中的牌不够两张
-            if (selectedCards == null || selectedCards.Count < 2) 
-            {
-                Godot.GD.Print("[MyFirstMod] 玩家取消了选卡或未选满2张");
-                return false;
-            }
+            if (selectedCards == null || selectedCards.Count < 2) return false;
 
             foreach (var card in selectedCards)
             {
@@ -156,7 +125,9 @@ namespace MyFirstModCode
                 var allCards = (allCardsProp?.GetValue(cardPool) as IEnumerable)?.Cast<object>().ToList();
                 if (allCards == null) return false;
 
-                var rarityType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Entities.Cards.CardRarity");
+                var rarityType = FindTypeByName("CardRarity");
+                if (rarityType == null) { Godot.GD.Print("[MyFirstMod] 严重错误: 找不到 CardRarity"); return false; }
+                
                 object rewardRarity = Enum.Parse(rarityType, targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" });
 
                 var eligible = allCards.Where(c => {
@@ -178,30 +149,39 @@ namespace MyFirstModCode
 
                 var rewardCard = eligible[new Random().Next(eligible.Count)];
 
-                var optionsType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationOptions");
+                // 【核心修复】动态模糊搜索 Enum 类型，防止命名空间硬编码导致找不到
+                var optionsType = FindTypeByName("CardCreationOptions");
+                var sourceType = FindTypeByName("CardCreationSource");
+                var oddsType = FindTypeByName("CardRarityOddsType");
+
+                if (sourceType == null || oddsType == null) {
+                    Godot.GD.Print("[MyFirstMod] 严重错误: 找不到 CardCreationSource 或 CardRarityOddsType");
+                    return false;
+                }
+
                 var options = Activator.CreateInstance(optionsType, new object[] {
                     Array.Empty<object>(),
-                    Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"),
-                    Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardRarityOddsType"), "Uniform")
+                    Enum.Parse(sourceType, "Other"),
+                    Enum.Parse(oddsType, "Uniform")
                 });
 
-                var cardModelType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Entities.Cards.CardModel");
+                var cardModelType = FindTypeByName("CardModel");
                 var listType = typeof(List<>).MakeGenericType(cardModelType);
                 var cardList = (IList)Activator.CreateInstance(listType);
                 cardList.Add(rewardCard);
 
-                var cardRewardType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Rewards.CardReward");
+                var cardRewardType = FindTypeByName("CardReward");
                 var rewardCtor = AccessTools.Constructor(cardRewardType, new[] { 
                     typeof(IEnumerable<>).MakeGenericType(cardModelType), 
-                    AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), 
+                    sourceType, 
                     typeof(Player), 
                     optionsType 
                 });
                 
                 if (rewardCtor == null) return false;
-                var reward = rewardCtor.Invoke(new object[] { cardList, Enum.Parse(AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardCreationSource"), "Other"), Owner, options });
+                var reward = rewardCtor.Invoke(new object[] { cardList, Enum.Parse(sourceType, "Other"), Owner, options });
 
-                var rewardsListType = typeof(List<>).MakeGenericType(AccessTools.TypeByName("MegaCrit.Sts2.Core.Rewards.Reward"));
+                var rewardsListType = typeof(List<>).MakeGenericType(FindTypeByName("Reward"));
                 var rewardsList = (IList)Activator.CreateInstance(rewardsListType);
                 rewardsList.Add(reward);
 
@@ -226,7 +206,6 @@ namespace MyFirstModCode
             try
             {
                 Type t = card.GetType();
-                
                 string typeStr = AccessTools.Property(t, "Type")?.GetValue(card)?.ToString();
                 if (typeStr == "Curse" || typeStr == "Status" || typeStr == "Quest") return false;
 
