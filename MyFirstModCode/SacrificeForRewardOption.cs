@@ -58,7 +58,7 @@ namespace MyFirstModCode
                 var prompt = new LocString("rest_site_ui", "选择两张卡牌进行重塑");
                 object prefs = null;
 
-                // 创建 CardSelectorPrefs 对象（已修复 Parameter count mismatch）
+                // 1. 创建 CardSelectorPrefs 对象
                 var constructorAttempts = new object[][] { new object[] { prompt, 2, 2 } };
                 foreach (var args in constructorAttempts)
                 {
@@ -72,7 +72,7 @@ namespace MyFirstModCode
                 }
                 if (prefs == null) return false;
 
-                // 动态查找 FromDeckGeneric 的正确参数数量
+                // 2. 动态匹配 FromDeckGeneric 并正确处理异步 Task 返回值
                 var cardSelectCmdType = typeof(CardSelectCmd);
                 var methods = AccessTools.GetDeclaredMethods(cardSelectCmdType)
                     .Where(m => m.Name == "FromDeckGeneric")
@@ -94,17 +94,31 @@ namespace MyFirstModCode
 
                     try
                     {
-                        var result = method.Invoke(null, args.ToArray()) as IEnumerable;
-                        if (result != null)
+                        var resultObj = method.Invoke(null, args.ToArray());
+
+                        // 【核心修复】处理异步 Task 返回值
+                        if (resultObj is Task task)
                         {
-                            selectedCards = result.Cast<object>().ToList();
-                            Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckGeneric（参数数量: {parameters.Length}）");
+                            await task; // 等待玩家选卡完成
+                            var taskResultProp = task.GetType().GetProperty("Result");
+                            var taskResult = taskResultProp?.GetValue(task);
+                            if (taskResult is IEnumerable enumerableResult)
+                            {
+                                selectedCards = enumerableResult.Cast<object>().ToList();
+                                Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckGeneric (异步)，拿到 {selectedCards.Count} 张牌");
+                                break;
+                            }
+                        }
+                        else if (resultObj is IEnumerable enumerable)
+                        {
+                            selectedCards = enumerable.Cast<object>().ToList();
+                            Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckGeneric (同步)，拿到 {selectedCards.Count} 张牌");
                             break;
                         }
                     }
                     catch (Exception ex)
                     {
-                        Godot.GD.Print($"[MyFirstMod] 调用 FromDeckGeneric（参数数量: {parameters.Length}）失败: {ex.InnerException?.Message ?? ex.Message}");
+                        Godot.GD.Print($"[MyFirstMod] 调用 FromDeckGeneric 失败: {ex.InnerException?.Message ?? ex.Message}");
                     }
                 }
             }
@@ -114,7 +128,12 @@ namespace MyFirstModCode
                 return false; 
             }
 
-            if (selectedCards == null || selectedCards.Count < 2) return false;
+            // 如果玩家取消选卡，或者选中的牌不够两张
+            if (selectedCards == null || selectedCards.Count < 2) 
+            {
+                Godot.GD.Print("[MyFirstMod] 玩家取消了选卡或未选满2张");
+                return false;
+            }
 
             foreach (var card in selectedCards)
             {
@@ -140,20 +159,14 @@ namespace MyFirstModCode
                 var rarityType = AccessTools.TypeByName("MegaCrit.Sts2.Core.Entities.Cards.CardRarity");
                 object rewardRarity = Enum.Parse(rarityType, targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" });
 
-                // 【核心修复】奖励池严格过滤：排除基础卡、诅咒、状态、任务牌
                 var eligible = allCards.Where(c => {
                     var rarity = AccessTools.Property(c.GetType(), "Rarity")?.GetValue(c)?.ToString();
                     var type = AccessTools.Property(c.GetType(), "Type")?.GetValue(c)?.ToString();
-                    
-                    // 1. 排除基础卡
                     if (rarity == "Basic") return false;
-                    // 2. 排除诅咒、状态、任务
                     if (type == "Curse" || type == "Status" || type == "Quest") return false;
-                    // 3. 匹配目标稀有度
                     return rarity == rewardRarity.ToString();
                 }).ToList();
 
-                // 如果目标稀有度没牌（比如先古），退化为所有非基础、非状态、非诅咒的牌
                 if (!eligible.Any()) 
                 {
                      eligible = allCards.Where(c => {
@@ -207,7 +220,6 @@ namespace MyFirstModCode
             }
         }
 
-        // 删卡判定：允许基础卡（Basic）被选中删除
         private static bool IsValidCard(object card)
         {
             if (card == null) return false;
@@ -229,7 +241,6 @@ namespace MyFirstModCode
                 }
 
                 string rarityStr = AccessTools.Property(t, "Rarity")?.GetValue(card)?.ToString();
-                // 放行 Basic，让基础卡可以参与删卡
                 if (rarityStr != "Common" && rarityStr != "Uncommon" && rarityStr != "Rare" && rarityStr != "Ancient" && rarityStr != "Basic") return false;
 
                 return true;
@@ -237,7 +248,6 @@ namespace MyFirstModCode
             catch { return false; }
         }
 
-        // 删卡价值权重：Basic 和 Common 视为 1
         private static int GetRarityWeight(object card) => AccessTools.Property(card.GetType(), "Rarity")?.GetValue(card)?.ToString() switch { "Basic" => 1, "Common" => 1, "Uncommon" => 2, "Rare" => 3, "Ancient" => 4, _ => 1 };
     }
 }
