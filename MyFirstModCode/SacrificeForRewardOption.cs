@@ -55,12 +55,45 @@ namespace MyFirstModCode
                 var promptProp = AccessTools.Property(prefsType, "RemoveSelectionPrompt");
                 object prompt = promptProp?.GetValue(null) ?? new LocString("rest_site_ui", "选择卡牌删除");
 
+                // 【修复Bug 1：允许返回】将 MinSelect 从 1 改为 0，让玩家可以点返回按钮
                 object prefs = null;
-                foreach (var args in new object[][] { new object[] { prompt, 1, 2 } })
+                foreach (var args in new object[][] { new object[] { prompt, 0, 2 } })
                 {
                     try { prefs = Activator.CreateInstance(prefsType, args); break; } catch { }
                 }
                 if (prefs == null) return false;
+
+                // 【修复Bug 2：UI层过滤任务牌】注入Filter，让不可删的牌直接在UI消失
+                try
+                {
+                    var filterProp = AccessTools.Property(prefsType, "Filter") ?? AccessTools.Property(prefsType, "CardFilter");
+                    var filterField = AccessTools.Field(prefsType, "<Filter>k__BackingField") ?? AccessTools.Field(prefsType, "<CardFilter>k__BackingField");
+
+                    var cardModelType = FindTypeByName("CardModel");
+                    var funcType = typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool));
+                    var parameter = Expression.Parameter(cardModelType, "card");
+                    var methodCall = Expression.Call(typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic), Expression.Convert(parameter, typeof(object)));
+                    var filterDelegate = Expression.Lambda(funcType, methodCall, parameter).Compile();
+
+                    if (filterProp != null && filterProp.CanWrite)
+                    {
+                        filterProp.SetValue(prefs, filterDelegate);
+                        Godot.GD.Print("[MyFirstMod] 成功注入 Filter 属性，任务牌/诅咒牌将不再显示在UI中");
+                    }
+                    else if (filterField != null)
+                    {
+                        filterField.SetValue(prefs, filterDelegate);
+                        Godot.GD.Print("[MyFirstMod] 成功注入 Filter 字段，任务牌/诅咒牌将不再显示在UI中");
+                    }
+                    else
+                    {
+                        Godot.GD.Print("[MyFirstMod] 警告: 无法注入 Filter，UI仍会显示任务牌，但二次拦截会阻止删除。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Godot.GD.Print($"[MyFirstMod] 注入Filter时出错（不影响二次拦截）: {ex.Message}");
+                }
 
                 var methods = AccessTools.GetDeclaredMethods(typeof(CardSelectCmd))
                     .Where(m => m.Name == "FromDeckForRemoval")
@@ -88,6 +121,7 @@ namespace MyFirstModCode
                             if (taskResult is IEnumerable enumerableResult)
                             {
                                 selectedCards = enumerableResult.Cast<object>().ToList();
+                                Godot.GD.Print($"[MyFirstMod] 选卡完成，拿到 {selectedCards.Count} 张牌");
                                 break;
                             }
                         }
@@ -97,29 +131,33 @@ namespace MyFirstModCode
             }
             catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); return false; }
 
-            if (selectedCards == null || selectedCards.Count < 1) return false;
-            foreach (var card in selectedCards) { if (!IsValidCard(card)) return false; }
+            // 【修复Bug 1：返回处理】如果玩家点了返回（选了0张），直接安全退出，不删卡不发奖
+            if (selectedCards == null || selectedCards.Count < 1)
+            {
+                Godot.GD.Print("[MyFirstMod] 玩家取消了操作，安全返回篝火。");
+                return false;
+            }
+
+            // 二次拦截兜底
+            foreach (var card in selectedCards)
+            {
+                if (!IsValidCard(card)) 
+                {
+                    Godot.GD.Print($"[MyFirstMod] 玩家选中了违规卡牌，操作取消。");
+                    return false;
+                }
+            }
 
             try
             {
-                // 1. 严格计算权重
                 int targetQ = 1;
-                if (selectedCards.Count == 1)
-                {
-                    targetQ = GetRarityWeight(selectedCards[0]);
-                }
-                else
-                {
-                    int w1 = GetRarityWeight(selectedCards[0]);
-                    int w2 = GetRarityWeight(selectedCards[1]);
-                    targetQ = (int)Math.Round((w1 + w2) / 2.0); 
-                    if (targetQ < 1) targetQ = 1;
-                    if (targetQ > 4) targetQ = 4;
-                }
+                if (selectedCards.Count == 1) { targetQ = GetRarityWeight(selectedCards[0]); }
+                else { int w1 = GetRarityWeight(selectedCards[0]); int w2 = GetRarityWeight(selectedCards[1]); targetQ = (int)Math.Round((w1 + w2) / 2.0); }
+                if (targetQ < 1) targetQ = 1;
+                if (targetQ > 4) targetQ = 4;
                 string targetRarityStr = targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" };
-                Godot.GD.Print($"[MyFirstMod] 计算完毕：目标品质等级为 {targetQ}（{targetRarityStr}）");
+                Godot.GD.Print($"[MyFirstMod] 目标品质等级为 {targetQ}（{targetRarityStr}）");
 
-                // 2. 删除卡牌（已同步状态，不回滚）
                 var removeMethods = AccessTools.GetDeclaredMethods(typeof(CardPileCmd)).Where(m => m.Name == "RemoveFromDeck").ToList();
                 MethodInfo singleCardMethod = null;
                 foreach (var m in removeMethods)
@@ -136,7 +174,7 @@ namespace MyFirstModCode
                 }
                 Godot.GD.Print($"[MyFirstMod] 成功删除了 {selectedCards.Count} 张卡");
 
-                // 3. 发放奖励（严格使用目标稀有度过滤器）
+                // 发奖励
                 var cardModelType = FindTypeByName("CardModel");
                 var cardPool = AccessTools.Property(Owner.Character.GetType(), "CardPool")?.GetValue(Owner.Character);
                 var poolType = FindTypeByName("CardPoolModel");
@@ -151,14 +189,11 @@ namespace MyFirstModCode
                 var oddsType = FindTypeByName("CardRarityOddsType");
                 var cardRewardType = FindTypeByName("CardReward");
 
-                // 【核心修复】构建一个同时检查“合规牌”和“目标稀有度”的过滤器，绝不让游戏随机抽卡
                 var parameter = Expression.Parameter(cardModelType, "card");
                 var isValidCall = Expression.Call(typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic), Expression.Convert(parameter, typeof(object)));
-                
                 var rarityProp = Expression.Property(parameter, "Rarity");
                 var targetRarityConst = Expression.Constant(rewardRarity, rarityProp.Type);
                 var rarityCheck = Expression.Equal(rarityProp, targetRarityConst);
-
                 var body = Expression.AndAlso(isValidCall, rarityCheck);
                 var filterDelegate = Expression.Lambda(typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool)), body, parameter).Compile();
 
