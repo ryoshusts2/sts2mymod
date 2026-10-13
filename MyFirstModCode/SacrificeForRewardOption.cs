@@ -46,9 +46,7 @@ namespace MyFirstModCode
             Godot.GD.Print("[MyFirstMod] ======== 玩家点击了重塑选项！开始执行 ========");
             if (Owner == null) return false;
 
-            // 【核心修复】将 cardModelType 提到所有 try 块之外，确保全方法可见
             var cardModelType = FindTypeByName("CardModel");
-
             List<object> selectedCards = null;
             try
             {
@@ -58,15 +56,58 @@ namespace MyFirstModCode
                 var promptProp = AccessTools.Property(prefsType, "RemoveSelectionPrompt");
                 object prompt = promptProp?.GetValue(null) ?? new LocString("rest_site_ui", "选择卡牌删除");
 
-                // 【修复：允许返回】MinSelect 设为 0，玩家可点击返回键取消操作
+                // ============================================================
+                // 【Bug 1 修复】允许返回 / 取消
+                // 源码依据：CardSelectorPrefs 是 struct，有 init 属性 Cancelable
+                //           NDeckCardSelectScreen._Ready() 中：
+                //               if (_prefs.Cancelable) _closeButton.Enable();
+                //               else                   _closeButton.Disable();
+                // 因此必须设置 Cancelable = true，否则返回按钮永远禁用。
+                // MinSelect = 0 让"确认"按钮在 0 张时也可点，但不是返回按钮的控制项。
+                // ============================================================
                 object prefs = null;
-                foreach (var args in new object[][] { new object[] { prompt, 0, 2 } })
+                try
                 {
-                    try { prefs = Activator.CreateInstance(prefsType, args); break; } catch { }
+                    prefs = Activator.CreateInstance(prefsType, new object[] { prompt, 0, 2 });
+                }
+                catch (Exception ex)
+                {
+                    Godot.GD.Print($"[MyFirstMod] 构造 CardSelectorPrefs 失败: {ex.Message}");
+                    return false;
                 }
                 if (prefs == null) return false;
 
-                // 【修复：UI过滤】根据源码，FromDeckForRemoval 支持 filter 参数，彻底隐藏不可删的牌
+                var cancelableProp = AccessTools.Property(prefsType, "Cancelable");
+                if (cancelableProp != null && cancelableProp.CanWrite)
+                {
+                    try
+                    {
+                        cancelableProp.SetValue(prefs, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Godot.GD.Print($"[MyFirstMod] 设置 Cancelable=true 失败，尝试写 backing field: {ex.Message}");
+                        var backingField = AccessTools.Field(prefsType, "<Cancelable>k__BackingField");
+                        if (backingField != null) backingField.SetValue(prefs, true);
+                    }
+                }
+                else
+                {
+                    Godot.GD.Print("[MyFirstMod] 警告：找不到 CardSelectorPrefs.Cancelable 可写属性，返回按钮可能不出现");
+                }
+
+                // 打印当前 prefs 内容，方便诊断
+                try
+                {
+                    var minProp = AccessTools.Property(prefsType, "MinSelect");
+                    var maxProp = AccessTools.Property(prefsType, "MaxSelect");
+                    var cancelProp2 = AccessTools.Property(prefsType, "Cancelable");
+                    var reqProp = AccessTools.Property(prefsType, "RequireManualConfirmation");
+                    Godot.GD.Print($"[MyFirstMod] CardSelectorPrefs: Min={minProp?.GetValue(prefs)} Max={maxProp?.GetValue(prefs)} Cancelable={cancelProp2?.GetValue(prefs)} RequireManualConfirmation={reqProp?.GetValue(prefs)}");
+                }
+                catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打印 prefs 失败: {ex.Message}"); }
+
+                // UI过滤：FromDeckForRemoval 支持 filter 参数
                 var funcType = typeof(Func<,>).MakeGenericType(cardModelType, typeof(bool));
                 var parameter = Expression.Parameter(cardModelType, "card");
                 var methodCall = Expression.Call(typeof(SacrificeForRewardOption).GetMethod(nameof(IsValidCard), BindingFlags.Static | BindingFlags.NonPublic), Expression.Convert(parameter, typeof(object)));
@@ -81,7 +122,7 @@ namespace MyFirstModCode
                 {
                     var ps = method.GetParameters();
                     var args = new List<object> { Owner, prefs };
-                    
+
                     if (ps.Length >= 3 && ps[2].ParameterType.Name.Contains("Func"))
                     {
                         args.Add(filterDelegate);
@@ -105,7 +146,7 @@ namespace MyFirstModCode
                             if (taskResult is IEnumerable enumerableResult)
                             {
                                 selectedCards = enumerableResult.Cast<object>().ToList();
-                                Godot.GD.Print($"[MyFirstMod] 成功调用 FromDeckForRemoval，拿到 {selectedCards.Count} 张牌（UI已过滤）");
+                                Godot.GD.Print($"[MyFirstMod] 拿到 {selectedCards.Count} 张牌（UI已过滤）");
                                 break;
                             }
                         }
@@ -113,34 +154,37 @@ namespace MyFirstModCode
                     catch { }
                 }
             }
-            catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}"); return false; }
+            catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 打开选卡失败: {ex.Message}\n{ex.StackTrace}"); return false; }
 
-            // 【修复：安全返回】玩家点击取消（0张）直接退出
-            if (selectedCards == null || selectedCards.Count < 1)
+            // 严格判断选牌数量，必须正好是 2 张
+            if (selectedCards == null || selectedCards.Count != 2)
             {
-                Godot.GD.Print("[MyFirstMod] 玩家取消了操作，安全返回篝火。");
+                Godot.GD.Print($"[MyFirstMod] 玩家取消了操作或未选满2张（当前选了 {selectedCards?.Count ?? 0} 张），安全返回篝火。");
                 return false;
             }
 
-            // 二次强校验兜底
             foreach (var card in selectedCards)
             {
-                if (!IsValidCard(card)) 
-                {
-                    Godot.GD.Print($"[MyFirstMod] 玩家选中了违规卡牌，操作取消。");
-                    return false;
-                }
+                if (!IsValidCard(card)) return false;
             }
 
             try
             {
-                int targetQ = 1;
-                if (selectedCards.Count == 1) { targetQ = GetRarityWeight(selectedCards[0]); }
-                else { int w1 = GetRarityWeight(selectedCards[0]); int w2 = GetRarityWeight(selectedCards[1]); targetQ = (int)Math.Round((w1 + w2) / 2.0); }
+                // 获取卡牌权重（包含升级状态检查：敲过的卡 +0.5）
+                double w1 = GetCardWeight(selectedCards[0]);
+                double w2 = GetCardWeight(selectedCards[1]);
+
+                // 计算加权平均值
+                double avgWeight = (w1 + w2) / 2.0;
+
+                // 【五舍六入】小数部分 <= 0.5 时舍去，> 0.5 时进一。等价于 Math.Floor(avg + 0.4)
+                int targetQ = (int)Math.Floor(avgWeight + 0.4);
+
                 if (targetQ < 1) targetQ = 1;
                 if (targetQ > 4) targetQ = 4;
+
                 string targetRarityStr = targetQ switch { 1 => "Common", 2 => "Uncommon", 3 => "Rare", 4 => "Ancient", _ => "Common" };
-                Godot.GD.Print($"[MyFirstMod] 目标品质: {targetQ} ({targetRarityStr})");
+                Godot.GD.Print($"[MyFirstMod] 两张卡调整后权重为 {w1} 和 {w2}，平均值为 {avgWeight}，五舍六入后目标品质为 {targetQ}（{targetRarityStr}）");
 
                 // 删卡
                 var removeMethods = AccessTools.GetDeclaredMethods(typeof(CardPileCmd)).Where(m => m.Name == "RemoveFromDeck").ToList();
@@ -157,7 +201,7 @@ namespace MyFirstModCode
                     var removeTask = singleCardMethod.Invoke(null, new object[] { card, true });
                     if (removeTask is Task taskToWait) await taskToWait;
                 }
-                Godot.GD.Print($"[MyFirstMod] 成功删除了 {selectedCards.Count} 张卡");
+                Godot.GD.Print($"[MyFirstMod] 成功删除了 2 张卡");
 
                 // 发奖励
                 var cardPool = AccessTools.Property(Owner.Character.GetType(), "CardPool")?.GetValue(Owner.Character);
@@ -222,7 +266,7 @@ namespace MyFirstModCode
             }
             catch (Exception ex)
             {
-                Godot.GD.Print($"[MyFirstMod] 发奖报错: {ex.Message}");
+                Godot.GD.Print($"[MyFirstMod] 发奖报错: {ex.Message}\n{ex.StackTrace}");
                 return false;
             }
         }
@@ -257,9 +301,63 @@ namespace MyFirstModCode
             catch { return false; }
         }
 
-        private static int GetRarityWeight(object card) => AccessTools.Property(card.GetType(), "Rarity")?.GetValue(card)?.ToString() switch 
-        { 
-            "Basic" => 1, "Common" => 1, "Uncommon" => 2, "Rare" => 3, "Ancient" => 4, _ => 1 
-        };
+        // ============================================================
+        // 获取卡牌权重
+        // 源码依据：
+        //   CardModel.Rarity: public virtual CardRarity Rarity { get; }
+        //   CardModel.CurrentUpgradeLevel: public int CurrentUpgradeLevel { get; set; }
+        //   CardModel.IsUpgraded: public bool IsUpgraded => CurrentUpgradeLevel > 0;
+        //   CardRarity 枚举: None, Basic, Common, Uncommon, Rare, Ancient, Event, Token, Status, Curse, Quest
+        // 【Bug 2 修复】删除了错误的 "?? AccessTools.Property(t, \"Upgraded\")"
+        //              —— Upgraded 是 CardModel 上的事件（event Action? Upgraded），不是属性
+        //  同时加入调试日志，打印实际读到的稀有度 / 等级 / 最终权重
+        // ============================================================
+        private static double GetCardWeight(object card)
+        {
+            if (card == null) return 1.0;
+            try
+            {
+                Type t = card.GetType();
+
+                string rarityStr = AccessTools.Property(t, "Rarity")?.GetValue(card)?.ToString() ?? "Unknown";
+                double baseWeight = rarityStr switch
+                {
+                    "Basic" => 1,
+                    "Common" => 1,
+                    "Uncommon" => 2,
+                    "Rare" => 3,
+                    "Ancient" => 4,
+                    _ => 1
+                };
+
+                bool isUpgraded = false;
+                int upgradeLevel = 0;
+
+                var isUpgradedProp = AccessTools.Property(t, "IsUpgraded");
+                if (isUpgradedProp != null)
+                {
+                    var val = isUpgradedProp.GetValue(card);
+                    if (val is bool b) isUpgraded = b;
+                }
+
+                var upgradeLevelProp = AccessTools.Property(t, "CurrentUpgradeLevel");
+                if (upgradeLevelProp != null)
+                {
+                    var lvlVal = upgradeLevelProp.GetValue(card);
+                    if (lvlVal is int i) upgradeLevel = i;
+                }
+
+                double result = baseWeight + (isUpgraded ? 0.5 : 0);
+
+                Godot.GD.Print($"[MyFirstMod] GetCardWeight: rarity={rarityStr} base={baseWeight} CurrentUpgradeLevel={upgradeLevel} IsUpgraded={isUpgraded} => final={result}");
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Godot.GD.Print($"[MyFirstMod] GetCardWeight 报错: {ex.Message}");
+                return 1.0;
+            }
+        }
     }
 }
