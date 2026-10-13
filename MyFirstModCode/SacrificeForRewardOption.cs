@@ -110,38 +110,33 @@ namespace MyFirstModCode
                 if (selectedCards.Count == 1) { targetQ = GetRarityWeight(selectedCards[0]); }
                 else { int w1 = GetRarityWeight(selectedCards[0]); int w2 = GetRarityWeight(selectedCards[1]); targetQ = Math.Clamp((w1 + w2) / 2, 1, 4); }
 
-                var cardModelType = FindTypeByName("CardModel");
-                var listType = typeof(List<>).MakeGenericType(cardModelType);
-                var selectedCardList = (IList)Activator.CreateInstance(listType);
-                foreach (var card in selectedCards) { selectedCardList.Add(card); }
-
-                // 【终极修复】精确遍历寻找参数数量为1、参数类型为泛型集合的 RemoveFromDeck 方法，解决 Ambiguous match
+                // 【核心修复】遍历所有 RemoveFromDeck 重载，精确匹配单卡片版本 (CardModel, bool)
                 var removeMethods = AccessTools.GetDeclaredMethods(typeof(CardPileCmd)).Where(m => m.Name == "RemoveFromDeck").ToList();
-                MethodInfo removeMethod = null;
+                MethodInfo singleCardMethod = null;
                 foreach (var m in removeMethods)
                 {
                     var ps = m.GetParameters();
-                    if (ps.Length == 1)
+                    // 参数数量为1或2，且第一个参数名称为 CardModel，第二个参数为 bool（可选）
+                    if (ps.Length >= 1 && ps.Length <= 2 && ps[0].ParameterType.Name == "CardModel")
                     {
-                        var pt = ps[0].ParameterType;
-                        if (pt.IsGenericType && pt.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-                        {
-                            if (pt.GetGenericArguments()[0].Name == "CardModel")
-                            {
-                                removeMethod = m;
-                                break;
-                            }
-                        }
+                        singleCardMethod = m;
+                        break;
                     }
                 }
 
-                if (removeMethod == null) { Godot.GD.Print("[MyFirstMod] 找不到合适的 RemoveFromDeck 重载方法"); return false; }
+                if (singleCardMethod == null) { Godot.GD.Print("[MyFirstMod] 找不到单卡片版本的 RemoveFromDeck"); return false; }
 
-                var removeTask = removeMethod.Invoke(null, new object[] { selectedCardList });
-                if (removeTask is Task taskToWait) await taskToWait;
-                Godot.GD.Print($"[MyFirstMod] 成功调用 RemoveFromDeck 删除了 {selectedCardList.Count} 张卡（已同步状态，绝不回滚）");
+                Godot.GD.Print($"[MyFirstMod] 找到单卡片 RemoveFromDeck，准备逐张删除...");
+                foreach (var card in selectedCards)
+                {
+                    // 传入卡牌和 showPreview 参数（默认为 true）
+                    var removeTask = singleCardMethod.Invoke(null, new object[] { card, true });
+                    if (removeTask is Task taskToWait) await taskToWait;
+                }
+                Godot.GD.Print($"[MyFirstMod] 成功删除了 {selectedCards.Count} 张卡（已同步状态，绝不回滚）");
 
                 // --- 发奖励逻辑 ---
+                var cardModelType = FindTypeByName("CardModel");
                 var cardPool = AccessTools.Property(Owner.Character.GetType(), "CardPool")?.GetValue(Owner.Character);
                 var poolType = FindTypeByName("CardPoolModel");
                 var poolsList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(poolType));
