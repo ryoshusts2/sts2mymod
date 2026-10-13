@@ -22,6 +22,31 @@ namespace MyFirstModCode
 
         private static Type FindTypeByName(string name) => AccessTools.AllTypes().FirstOrDefault(t => t.Name == name);
 
+        // 万能构造函数调用器：自动匹配参数，防止 Constructor not found
+        private static object CreateInstanceWithDefaults(Type type, Type sourceType, Type oddsType)
+        {
+            if (type == null) return null;
+            foreach (var ctor in type.GetConstructors())
+            {
+                try
+                {
+                    var ps = ctor.GetParameters();
+                    var args = new List<object>();
+                    foreach (var p in ps)
+                    {
+                        if (p.ParameterType == sourceType) args.Add(Enum.Parse(sourceType, "Other"));
+                        else if (p.ParameterType == oddsType) args.Add(Enum.Parse(oddsType, "Uniform"));
+                        else if (p.ParameterType.IsValueType) args.Add(Activator.CreateInstance(p.ParameterType));
+                        else if (p.ParameterType.IsArray) args.Add(Array.CreateInstance(p.ParameterType.GetElementType(), 0));
+                        else args.Add(null);
+                    }
+                    return ctor.Invoke(args.ToArray());
+                }
+                catch { }
+            }
+            return null;
+        }
+
         public override bool IsEnabled
         {
             get
@@ -37,11 +62,7 @@ namespace MyFirstModCode
                     foreach (var c in cards) { if (IsValidCard(c)) count++; }
                     return count >= 2;
                 }
-                catch (Exception ex)
-                {
-                    Godot.GD.Print($"[MyFirstMod] IsEnabled 报错: {ex.Message}");
-                    return false;
-                }
+                catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] IsEnabled 报错: {ex.Message}"); return false; }
             }
         }
 
@@ -58,29 +79,18 @@ namespace MyFirstModCode
 
                 var prompt = new LocString("rest_site_ui", "选择两张卡牌进行重塑");
                 object prefs = null;
-
-                var constructorAttempts = new object[][] { new object[] { prompt, 2, 2 } };
-                foreach (var args in constructorAttempts)
+                foreach (var args in new object[][] { new object[] { prompt, 2, 2 } })
                 {
                     try { prefs = Activator.CreateInstance(prefsType, args); break; } catch { }
                 }
                 if (prefs == null) return false;
 
-                var cardSelectCmdType = typeof(CardSelectCmd);
-                var methods = AccessTools.GetDeclaredMethods(cardSelectCmdType)
-                    .Where(m => m.Name == "FromDeckGeneric")
-                    .OrderBy(m => m.GetParameters().Length)
-                    .ToList();
-
+                var methods = AccessTools.GetDeclaredMethods(typeof(CardSelectCmd)).Where(m => m.Name == "FromDeckGeneric").OrderBy(m => m.GetParameters().Length).ToList();
                 foreach (var method in methods)
                 {
-                    var parameters = method.GetParameters();
                     var args = new List<object> { Owner, prefs };
-
-                    for (int i = 2; i < parameters.Length; i++)
-                    {
-                        args.Add(parameters[i].ParameterType.IsValueType ? Activator.CreateInstance(parameters[i].ParameterType) : null);
-                    }
+                    var ps = method.GetParameters();
+                    for (int i = 2; i < ps.Length; i++) args.Add(ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null);
 
                     try
                     {
@@ -89,11 +99,7 @@ namespace MyFirstModCode
                         {
                             await task;
                             var taskResult = task.GetType().GetProperty("Result")?.GetValue(task);
-                            if (taskResult is IEnumerable enumerableResult)
-                            {
-                                selectedCards = enumerableResult.Cast<object>().ToList();
-                                break;
-                            }
+                            if (taskResult is IEnumerable enumerableResult) { selectedCards = enumerableResult.Cast<object>().ToList(); break; }
                         }
                     }
                     catch (Exception ex) { Godot.GD.Print($"[MyFirstMod] 调用 FromDeckGeneric 失败: {ex.InnerException?.Message ?? ex.Message}"); }
@@ -103,10 +109,7 @@ namespace MyFirstModCode
 
             if (selectedCards == null || selectedCards.Count < 2) return false;
 
-            foreach (var card in selectedCards)
-            {
-                if (!IsValidCard(card)) return false;
-            }
+            foreach (var card in selectedCards) { if (!IsValidCard(card)) return false; }
 
             try
             {
@@ -146,36 +149,43 @@ namespace MyFirstModCode
 
                 var rewardCard = eligible[new Random().Next(eligible.Count)];
 
-                var optionsType = FindTypeByName("CardCreationOptions");
+                // 【终极修复】使用万能构造函数调用器
                 var sourceType = FindTypeByName("CardCreationSource");
                 var oddsType = FindTypeByName("CardRarityOddsType");
-                var poolType = FindTypeByName("CardPoolModel");
-
-                // 【终极修复】构造正确类型的 CardPoolModel 集合，避免构造函数找不到
-                var listType = typeof(List<>).MakeGenericType(poolType);
-                var cardPools = Activator.CreateInstance(listType);
-
-                var options = Activator.CreateInstance(optionsType, new object[] {
-                    cardPools,
-                    Enum.Parse(sourceType, "Other"),
-                    Enum.Parse(oddsType, "Uniform")
-                });
+                var optionsType = FindTypeByName("CardCreationOptions");
+                
+                object options = CreateInstanceWithDefaults(optionsType, sourceType, oddsType);
+                if (options == null) { Godot.GD.Print("[MyFirstMod] 无法创建 CardCreationOptions"); return false; }
 
                 var cardModelType = FindTypeByName("CardModel");
-                var cardListType = typeof(List<>).MakeGenericType(cardModelType);
-                var cardList = (IList)Activator.CreateInstance(cardListType);
+                var listType = typeof(List<>).MakeGenericType(cardModelType);
+                var cardList = (IList)Activator.CreateInstance(listType);
                 cardList.Add(rewardCard);
 
                 var cardRewardType = FindTypeByName("CardReward");
-                var rewardCtor = AccessTools.Constructor(cardRewardType, new[] { 
-                    typeof(IEnumerable<>).MakeGenericType(cardModelType), 
-                    sourceType, 
-                    typeof(Player), 
-                    optionsType 
-                });
-                
-                if (rewardCtor == null) { Godot.GD.Print("[MyFirstMod] 找不到 CardReward 构造函数"); return false; }
-                var reward = rewardCtor.Invoke(new object[] { cardList, Enum.Parse(sourceType, "Other"), Owner, options });
+                object reward = null;
+                foreach (var ctor in cardRewardType.GetConstructors())
+                {
+                    try
+                    {
+                        var ps = ctor.GetParameters();
+                        var args = new List<object>();
+                        foreach (var p in ps)
+                        {
+                            if (p.ParameterType.IsAssignableFrom(typeof(IEnumerable<>).MakeGenericType(cardModelType))) args.Add(cardList);
+                            else if (p.ParameterType == sourceType) args.Add(Enum.Parse(sourceType, "Other"));
+                            else if (p.ParameterType == typeof(Player)) args.Add(Owner);
+                            else if (p.ParameterType == options.GetType()) args.Add(options);
+                            else if (p.ParameterType.IsValueType) args.Add(Activator.CreateInstance(p.ParameterType));
+                            else args.Add(null);
+                        }
+                        reward = ctor.Invoke(args.ToArray());
+                        if (reward != null) break;
+                    }
+                    catch { }
+                }
+
+                if (reward == null) { Godot.GD.Print("[MyFirstMod] 无法创建 CardReward"); return false; }
 
                 var rewardsListType = typeof(List<>).MakeGenericType(FindTypeByName("Reward"));
                 var rewardsList = (IList)Activator.CreateInstance(rewardsListType);
